@@ -42,7 +42,7 @@ with tab_search:
             "Qualification": p.qualification, "Occupation": p.occupation,
             "Stage": p.stage, "Horoscope": "Yes" if p.horoscope_available else "No",
         } for p in profiles]
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
         selected_id = st.selectbox(
             "View / edit a profile",

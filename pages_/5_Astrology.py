@@ -41,7 +41,7 @@ if st.button("Compute Chart", type="primary"):
                 deg_in_sign = lon % 30
                 rows.append({"Planet": planet, "Sign": RASHIS[sign], "Degree": f"{deg_in_sign:.2f}°"})
             import pandas as pd
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
 
 st.divider()
 st.caption(

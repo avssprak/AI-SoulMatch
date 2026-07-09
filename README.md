@@ -40,7 +40,10 @@ streamlit run app.py
 - **Matching**: pick a bride and groom, run the configurable practical-criteria
   rule engine (religion/gothram are mandatory; age/height/caste/location/etc. are
   weighted), and — if both have DOB, birth time, and birth place — compute a full
-  Ashta Koota (Guna Milan) score with Manglik/Rajju/Vedha dosha checks.
+  Ashta Koota (Guna Milan) score with Manglik/Rajju/Vedha dosha checks. From there,
+  generate an **AI Recommendation** — a narrative summary (strengths, concerns,
+  questions to ask the families, family/lifestyle/career compatibility, final
+  verdict) via the configured LLM provider — before saving the match result.
 - **Astrology**: standalone chart lookup for verifying a single horoscope.
 - **Dashboard**: pipeline funnel, score distribution, recent activity.
 
@@ -64,6 +67,10 @@ streamlit run app.py
 - Documents (`soulmatch/documents.py`) are stored on local disk under `uploads/`;
   uploaded filenames are sanitized (basename + random prefix) so a crafted
   filename can't escape the profile's upload directory.
+- AI recommendations (`soulmatch/recommendation.py`) reuse the same pluggable
+  LLM provider as extraction, with a deterministic offline template when
+  `LLM_PROVIDER=mock`. The Matching page persists the generated recommendation
+  JSON in `MatchResult.notes` when a match is saved.
 
 ## Tests
 

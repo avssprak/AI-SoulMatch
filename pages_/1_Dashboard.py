@@ -40,7 +40,7 @@ with col1:
         stage_counts = pd.Series([p.stage for p in profiles]).value_counts().reset_index()
         stage_counts.columns = ["stage", "count"]
         fig = px.bar(stage_counts, x="stage", y="count")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     else:
         st.info("No profiles yet — go to **Ingest WhatsApp** to add some.")
 
@@ -49,7 +49,7 @@ with col2:
     if matches:
         df = pd.DataFrame([{"koota_total": m.koota_total or 0} for m in matches])
         fig = px.histogram(df, x="koota_total", nbins=12, range_x=[0, 36])
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     else:
         st.info("No matches computed yet — go to **Matching**.")
 
