@@ -1,8 +1,9 @@
 # AI-SoulMatch
 
 AI-powered matrimonial intelligence platform — MVP implementing WhatsApp chat-export
-ingestion, AI profile extraction, practical rule-based screening, and Vedic Ashta
-Koota astrology matching, on a Streamlit dashboard.
+ingestion, AI profile extraction, duplicate detection, a document repository,
+practical rule-based screening, and Vedic Ashta Koota astrology matching, on a
+Streamlit dashboard.
 
 ## Setup
 
@@ -27,9 +28,15 @@ streamlit run app.py
 
 - **Ingest**: upload a WhatsApp "Export Chat" `.txt` or `.zip` file. Messages are
   parsed and stored; each message can then be run through the extraction agent to
-  produce a structured profile.
+  produce a structured profile. Before saving, the pending profile is checked
+  against existing same-gender profiles for likely duplicates (matching phone,
+  DOB, or a fuzzy name match) and flagged for review — the volunteer can still
+  save anyway if it's a genuine new profile.
 - **Profiles**: search, edit, and move profiles through the CRM pipeline stages
-  (New → AI Extracted → ... → Marriage/Rejected/Closed), with an activity timeline.
+  (New → AI Extracted → ... → Marriage/Rejected/Closed), with an activity timeline,
+  a **Documents** section (upload/download/delete biodata PDFs, horoscopes, photos,
+  family photos, certificates — stored under `uploads/<profile_id>/`), and the
+  same duplicate check when adding a profile manually.
 - **Matching**: pick a bride and groom, run the configurable practical-criteria
   rule engine (religion/gothram are mandatory; age/height/caste/location/etc. are
   weighted), and — if both have DOB, birth time, and birth place — compute a full
@@ -51,6 +58,12 @@ streamlit run app.py
   `soulmatch/ingest/whatsapp_export.py`. This keeps the WhatsApp account safe from
   automation bans; a live-capture source can be added later behind the same
   `RawMessage` ingestion point.
+- Duplicate detection (`soulmatch/duplicates.py`) uses exact phone/WhatsApp match,
+  DOB match, and stdlib `difflib` fuzzy name similarity — no extra dependency, no
+  network call. Photo/horoscope similarity is a later-phase enhancement.
+- Documents (`soulmatch/documents.py`) are stored on local disk under `uploads/`;
+  uploaded filenames are sanitized (basename + random prefix) so a crafted
+  filename can't escape the profile's upload directory.
 
 ## Tests
 

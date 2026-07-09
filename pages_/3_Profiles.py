@@ -1,9 +1,13 @@
+from datetime import date
+
 import pandas as pd
 import streamlit as st
 from sqlalchemy import select
 
 from soulmatch.db import get_session
-from soulmatch.models import PIPELINE_STAGES, Activity, Profile
+from soulmatch.documents import DOCUMENT_KINDS, delete_document, read_document, save_document
+from soulmatch.duplicates import find_duplicate_candidates
+from soulmatch.models import PIPELINE_STAGES, Activity, Document, Profile
 
 st.title("🗂️ Profiles")
 
@@ -104,6 +108,43 @@ with tab_search:
                     st.success("Saved.")
                     st.rerun()
 
+            st.subheader("Documents")
+            existing_docs = session.scalars(
+                select(Document).where(Document.profile_id == profile.id).order_by(Document.created_at.desc())
+            ).all()
+            if existing_docs:
+                for doc in existing_docs:
+                    dcol1, dcol2, dcol3 = st.columns([2, 2, 1])
+                    dcol1.markdown(f"**{doc.kind}** — {doc.filename}")
+                    try:
+                        file_bytes = read_document(doc)
+                        dcol2.download_button("Download", file_bytes, file_name=doc.filename, key=f"dl_{doc.id}")
+                    except FileNotFoundError:
+                        dcol2.caption("File missing on disk")
+                    if dcol3.button("Delete", key=f"del_doc_{doc.id}"):
+                        delete_document(session, doc)
+                        session.commit()
+                        st.rerun()
+            else:
+                st.caption("No documents uploaded yet.")
+
+            with st.form("upload_document", clear_on_submit=True):
+                doc_kind = st.selectbox("Document type", DOCUMENT_KINDS)
+                doc_file = st.file_uploader(
+                    "File", type=["pdf", "jpg", "jpeg", "png"], key=f"doc_upload_{profile.id}"
+                )
+                if st.form_submit_button("Upload document"):
+                    if doc_file is None:
+                        st.warning("Choose a file first.")
+                    else:
+                        save_document(session, profile.id, doc_kind, doc_file.name, doc_file.read())
+                        if doc_kind == "horoscope":
+                            profile.horoscope_available = True
+                        session.add(Activity(profile_id=profile.id, event="Document Uploaded",
+                                              detail=f"{doc_kind}: {doc_file.name}"))
+                        session.commit()
+                        st.rerun()
+
             st.subheader("Activity Timeline")
             activities = session.scalars(
                 select(Activity).where(Activity.profile_id == profile.id).order_by(Activity.created_at.desc())
@@ -130,28 +171,60 @@ with tab_manual:
         age = c3.number_input("Age*", 18, 80, 25)
 
         c1, c2, c3 = st.columns(3)
+        phone = c1.text_input("Phone")
+        dob_input = c2.date_input("Date of Birth", value=None, min_value=date(1930, 1, 1), max_value=date.today())
+        current_location = c3.text_input("Current Location")
+
+        c1, c2, c3 = st.columns(3)
         religion = c1.text_input("Religion")
         caste = c2.text_input("Caste")
-        current_location = c3.text_input("Current Location")
+        gothram = c3.text_input("Gothram")
 
         c1, c2 = st.columns(2)
         qualification = c1.text_input("Qualification")
         occupation = c2.text_input("Occupation")
 
-        if st.form_submit_button("Create Profile", type="primary"):
-            if not full_name:
-                st.error("Full name is required.")
-            else:
+        submitted = st.form_submit_button("Check & Create Profile", type="primary")
+
+    if submitted:
+        if not full_name:
+            st.error("Full name is required.")
+        else:
+            st.session_state["pending_manual_profile"] = dict(
+                full_name=full_name, gender=gender, age=age, phone=phone or None,
+                dob=dob_input, current_location=current_location or None,
+                religion=religion or None, caste=caste or None, gothram=gothram or None,
+                qualification=qualification or None, occupation=occupation or None,
+            )
+
+    pending = st.session_state.get("pending_manual_profile")
+    if pending:
+        with get_session() as session:
+            duplicates = find_duplicate_candidates(
+                session, full_name=pending["full_name"], gender=pending["gender"],
+                phone=pending["phone"], dob=pending["dob"],
+            )
+        if duplicates:
+            st.warning(f"⚠️ {len(duplicates)} possible duplicate(s) found:")
+            for d in duplicates[:5]:
+                st.markdown(f"- **#{d.profile.id} {d.profile.full_name or 'Unnamed'}** "
+                            f"({d.score}% match) — {'; '.join(d.reasons)}")
+        else:
+            st.success("No duplicates found.")
+
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            if st.button("Create profile" + (" anyway" if duplicates else ""), type="primary"):
                 with get_session() as session:
-                    profile = Profile(
-                        full_name=full_name, gender=gender, age=age,
-                        religion=religion or None, caste=caste or None,
-                        current_location=current_location or None,
-                        qualification=qualification or None, occupation=occupation or None,
-                        stage="New",
-                    )
+                    profile = Profile(stage="New", **pending)
                     session.add(profile)
                     session.flush()
                     session.add(Activity(profile_id=profile.id, event="Profile Created", detail="Manual entry"))
                     session.commit()
-                st.success(f"Created profile #{profile.id}.")
+                    new_id = profile.id
+                del st.session_state["pending_manual_profile"]
+                st.success(f"Created profile #{new_id}.")
+        with col2:
+            if st.button("Cancel"):
+                del st.session_state["pending_manual_profile"]
+                st.rerun()
