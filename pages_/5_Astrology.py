@@ -27,10 +27,10 @@ if st.button("Compute Chart", type="primary"):
         else:
             summary = chart_summary(chart)
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Nakshatra", summary["nakshatra"])
+            c1.metric("Nakshatra", summary["nakshatra"], summary["nakshatra_te"], delta_color="off")
             c2.metric("Pada", summary["pada"])
-            c3.metric("Rashi (Moon Sign)", summary["rashi"])
-            c4.metric("Lagna (Ascendant)", summary["lagna"])
+            c3.metric("Rashi (Moon Sign)", summary["rashi"], summary["rashi_te"], delta_color="off")
+            c4.metric("Lagna (Ascendant)", summary["lagna"], summary["lagna_te"], delta_color="off")
 
             st.subheader("Planetary Positions (Sidereal)")
             from soulmatch.astrology.ephemeris import RASHIS

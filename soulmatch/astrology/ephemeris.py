@@ -3,6 +3,14 @@
 Uses the built-in Moshier ephemeris (FLG_MOSEPH) so no ephemeris data files
 need to be shipped; precision is far beyond what nakshatra/rashi/lagna
 determination requires.
+
+Ayanamsa is Lahiri (Chitrapaksha) — the ayanamsa adopted by India's Calendar
+Reform Committee (1956) and used by the Rashtriya Panchang and the great
+majority of regional panchangams, including Telugu ones. The 27-nakshatra /
+12-rashi sidereal framework and the Ashta Koota matching system are the same
+computation across Telugu, Hindi, Kannada, and Marathi matchmaking tradition;
+only the display names differ, so Telugu names are provided alongside the
+Sanskrit/English ones below for the UI.
 """
 
 from __future__ import annotations
@@ -27,6 +35,20 @@ RASHIS = [
     "Karka (Cancer)", "Simha (Leo)", "Kanya (Virgo)", "Tula (Libra)",
     "Vrischika (Scorpio)", "Dhanu (Sagittarius)", "Makara (Capricorn)",
     "Kumbha (Aquarius)", "Meena (Pisces)",
+]
+
+NAKSHATRAS_TE = [
+    "అశ్విని", "భరణి", "కృత్తిక", "రోహిణి", "మృగశిర", "ఆరుద్ర",
+    "పునర్వసు", "పుష్యమి", "ఆశ్లేష", "మఖ", "పుబ్బ",
+    "ఉత్తర", "హస్త", "చిత్త", "స్వాతి", "విశాఖ", "అనూరాధ",
+    "జ్యేష్ఠ", "మూల", "పూర్వాషాఢ", "ఉత్తరాషాఢ", "శ్రవణం",
+    "ధనిష్ఠ", "శతభిషం", "పూర్వాభాద్ర", "ఉత్తరాభాద్ర",
+    "రేవతి",
+]
+
+RASHIS_TE = [
+    "మేషం", "వృషభం", "మిథునం", "కర్కాటకం", "సింహం", "కన్య", "తుల",
+    "వృశ్చికం", "ధనుస్సు", "మకరం", "కుంభం", "మీనం",
 ]
 
 PLANETS = {
@@ -59,12 +81,24 @@ class Chart:
         return NAKSHATRAS[self.nakshatra]
 
     @property
+    def nakshatra_name_te(self) -> str:
+        return NAKSHATRAS_TE[self.nakshatra]
+
+    @property
     def rashi_name(self) -> str:
         return RASHIS[self.rashi]
 
     @property
+    def rashi_name_te(self) -> str:
+        return RASHIS_TE[self.rashi]
+
+    @property
     def lagna_name(self) -> str:
         return RASHIS[self.lagna]
+
+    @property
+    def lagna_name_te(self) -> str:
+        return RASHIS_TE[self.lagna]
 
     def planet_sign(self, planet: str) -> int:
         return int(self.planet_longitudes[planet] // 30)

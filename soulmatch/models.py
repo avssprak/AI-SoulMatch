@@ -35,6 +35,16 @@ PIPELINE_STAGES = [
     "Closed",
 ]
 
+TASK_STATUSES = ["Pending", "Done", "Cancelled"]
+
+STANDARD_TASK_TITLES = [
+    "Call parents",
+    "Collect horoscope",
+    "Upload biodata",
+    "Follow up after meeting",
+    "Schedule second meeting",
+]
+
 
 class RawMessage(Base):
     __tablename__ = "raw_messages"
@@ -121,6 +131,7 @@ class Profile(Base):
     source_message: Mapped[RawMessage | None] = relationship(back_populates="profiles")
     documents: Mapped[list["Document"]] = relationship(back_populates="profile")
     activities: Mapped[list["Activity"]] = relationship(back_populates="profile")
+    tasks: Mapped[list["Task"]] = relationship(back_populates="profile")
 
 
 class Document(Base):
@@ -162,3 +173,20 @@ class Activity(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     profile: Mapped[Profile] = relationship(back_populates="activities")
+
+
+class Task(Base):
+    """Module 11 — Tasks & Reminders (e.g. 'Call parents', 'Collect horoscope')."""
+
+    __tablename__ = "tasks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    profile_id: Mapped[int] = mapped_column(ForeignKey("profiles.id"))
+    title: Mapped[str] = mapped_column(String(255))
+    due_date: Mapped[date | None] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(String(20), default="Pending")
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+    profile: Mapped[Profile] = relationship(back_populates="tasks")

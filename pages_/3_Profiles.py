@@ -7,7 +7,7 @@ from sqlalchemy import select
 from soulmatch.db import get_session
 from soulmatch.documents import DOCUMENT_KINDS, delete_document, read_document, save_document
 from soulmatch.duplicates import find_duplicate_candidates
-from soulmatch.models import PIPELINE_STAGES, Activity, Document, Profile
+from soulmatch.models import PIPELINE_STAGES, STANDARD_TASK_TITLES, Activity, Document, Profile, Task, utcnow
 
 st.title("🗂️ Profiles")
 
@@ -142,6 +142,51 @@ with tab_search:
                             profile.horoscope_available = True
                         session.add(Activity(profile_id=profile.id, event="Document Uploaded",
                                               detail=f"{doc_kind}: {doc_file.name}"))
+                        session.commit()
+                        st.rerun()
+
+            st.subheader("Tasks")
+            today = date.today()
+            existing_tasks = session.scalars(
+                select(Task).where(Task.profile_id == profile.id)
+                .order_by(Task.status, Task.due_date.is_(None), Task.due_date)
+            ).all()
+            if existing_tasks:
+                for task in existing_tasks:
+                    tcol1, tcol2, tcol3 = st.columns([3, 1, 1])
+                    label = f"**{task.title}**"
+                    if task.due_date:
+                        overdue = task.status == "Pending" and task.due_date < today
+                        label += f" — due {task.due_date}" + (" ⚠️ overdue" if overdue else "")
+                    label += f" ({task.status})"
+                    tcol1.markdown(label)
+                    if task.status == "Pending":
+                        if tcol2.button("Done", key=f"task_done_{task.id}"):
+                            task.status = "Done"
+                            task.completed_at = utcnow()
+                            session.add(Activity(profile_id=profile.id, event="Task completed",
+                                                  detail=task.title))
+                            session.commit()
+                            st.rerun()
+                        if tcol3.button("Cancel", key=f"task_cancel_{task.id}"):
+                            task.status = "Cancelled"
+                            session.commit()
+                            st.rerun()
+            else:
+                st.caption("No tasks yet.")
+
+            with st.form("add_task", clear_on_submit=True):
+                tcol1, tcol2 = st.columns([2, 1])
+                title_choice = tcol1.selectbox("Task", STANDARD_TASK_TITLES + ["Custom..."])
+                custom_title = tcol1.text_input("Custom task title (if 'Custom...' selected)")
+                due = tcol2.date_input("Due date", value=None)
+                if st.form_submit_button("Add task"):
+                    final_title = custom_title.strip() if title_choice == "Custom..." else title_choice
+                    if not final_title:
+                        st.warning("Enter a task title.")
+                    else:
+                        session.add(Task(profile_id=profile.id, title=final_title, due_date=due))
+                        session.add(Activity(profile_id=profile.id, event="Task added", detail=final_title))
                         session.commit()
                         st.rerun()
 

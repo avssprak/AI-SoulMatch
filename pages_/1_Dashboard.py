@@ -5,6 +5,7 @@ from sqlalchemy import select
 
 from soulmatch.db import get_session
 from soulmatch.models import Activity, MatchResult, Profile
+from soulmatch.tasks import overdue_tasks, pending_tasks
 
 st.title("📊 Executive Dashboard")
 
@@ -14,6 +15,8 @@ with get_session() as session:
     recent_activity = session.scalars(
         select(Activity).order_by(Activity.created_at.desc()).limit(15)
     ).all()
+    pending_task_count = len(pending_tasks(session))
+    overdue_task_count = len(overdue_tasks(session))
 
 total = len(profiles)
 brides = sum(1 for p in profiles if p.gender == "Bride")
@@ -22,13 +25,15 @@ pending_horoscope = sum(1 for p in profiles if not p.horoscope_available)
 active_cases = sum(1 for p in profiles if p.stage not in ("Marriage", "Rejected", "Closed"))
 marriages = sum(1 for p in profiles if p.stage == "Marriage")
 
-c1, c2, c3, c4, c5, c6 = st.columns(6)
+c1, c2, c3, c4, c5, c6, c7, c8 = st.columns(8)
 c1.metric("Total Profiles", total)
 c2.metric("Brides", brides)
 c3.metric("Grooms", grooms)
 c4.metric("Active Cases", active_cases)
 c5.metric("Pending Horoscope", pending_horoscope)
 c6.metric("Marriages", marriages)
+c7.metric("Pending Tasks", pending_task_count)
+c8.metric("Overdue Tasks", overdue_task_count)
 
 st.divider()
 

@@ -81,6 +81,14 @@ with tab_single:
 
         if astro_result:
             st.subheader("Vedic Astrology Compatibility")
+            with st.expander("Birth chart details (English / Telugu)"):
+                bc1, bc2 = st.columns(2)
+                for col, label, chart in ((bc1, "Bride", astro_result["bride_chart"]),
+                                           (bc2, "Groom", astro_result["groom_chart"])):
+                    col.markdown(f"**{label}**")
+                    col.markdown(f"Nakshatra: {chart['nakshatra']} ({chart['nakshatra_te']}), pada {chart['pada']}")
+                    col.markdown(f"Rashi: {chart['rashi']} ({chart['rashi_te']})")
+                    col.markdown(f"Lagna: {chart['lagna']} ({chart['lagna_te']})")
             st.metric("Ashta Koota Score", f"{koota_total:.1f} / 36", astro_result["overall_verdict"])
             koota_rows = [{"Koota": name, "Score": f"{v['score']:.1f} / {v['max']}", "Detail": v["detail"]}
                           for name, v in astro_result["koota"]["kootas"].items()]

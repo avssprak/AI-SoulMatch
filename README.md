@@ -44,8 +44,14 @@ streamlit run app.py
   generate an **AI Recommendation** — a narrative summary (strengths, concerns,
   questions to ask the families, family/lifestyle/career compatibility, final
   verdict) via the configured LLM provider — before saving the match result.
-- **Astrology**: standalone chart lookup for verifying a single horoscope.
-- **Dashboard**: pipeline funnel, score distribution, recent activity.
+- **Astrology**: standalone chart lookup for verifying a single horoscope, with
+  nakshatra/rashi/lagna shown in both English/Sanskrit and Telugu.
+- **Tasks**: per-profile task list (Call parents, Collect horoscope, Upload
+  biodata, Follow up after meeting, Schedule second meeting, or custom) with
+  due dates; a global Tasks page filters by status and surfaces overdue items
+  as the reminder mechanism.
+- **Dashboard**: pipeline funnel, score distribution, pending/overdue task
+  counts, recent activity.
 
 ## Architecture notes
 
@@ -53,7 +59,9 @@ streamlit run app.py
   switches to PostgreSQL later without code changes (SQLAlchemy, no dialect-specific
   types used).
 - Astrology uses Swiss Ephemeris's built-in Moshier model (`pyswisseph`, no external
-  ephemeris data files needed) with Lahiri ayanamsa, plus an offline city database
+  ephemeris data files needed) with Lahiri (Chitrapaksha) ayanamsa — the same
+  ayanamsa used by the Rashtriya Panchang and the great majority of regional
+  panchangams, including Telugu ones — plus an offline city database
   (`geonamescache` + `timezonefinder`) for birth-place geocoding — no network calls.
 - LLM extraction is provider-pluggable (`soulmatch/extraction/llm.py`): `gemini`
   (Google AI Studio free tier), `anthropic`, or `mock` (offline regex fallback).
@@ -71,6 +79,10 @@ streamlit run app.py
   LLM provider as extraction, with a deterministic offline template when
   `LLM_PROVIDER=mock`. The Matching page persists the generated recommendation
   JSON in `MatchResult.notes` when a match is saved.
+- Tasks (`soulmatch/tasks.py`, `models.Task`) are a lightweight reminder
+  mechanism: no push/email/WhatsApp delivery in this MVP, "reminders" surface
+  as overdue/upcoming counters on the Dashboard and a filterable board on the
+  Tasks page that a volunteer checks.
 
 ## Tests
 

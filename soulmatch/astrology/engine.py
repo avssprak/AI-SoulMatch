@@ -42,9 +42,12 @@ def build_chart(details: BirthDetails) -> Chart:
 def chart_summary(chart: Chart) -> dict:
     return {
         "nakshatra": chart.nakshatra_name,
+        "nakshatra_te": chart.nakshatra_name_te,
         "pada": chart.pada,
         "rashi": chart.rashi_name,
+        "rashi_te": chart.rashi_name_te,
         "lagna": chart.lagna_name,
+        "lagna_te": chart.lagna_name_te,
         "moon_longitude": round(chart.moon_longitude, 2),
     }
 
