@@ -30,6 +30,39 @@ On first run, a default admin account is created automatically — username
 password immediately** via the sidebar "Change password" panel, or create your
 own admin account via the Users page and deactivate the default one.
 
+## Local Hosting
+
+`run_local.ps1` starts the app bound to `0.0.0.0:8501` (not just `localhost`),
+so other devices on the same Wi-Fi/LAN can reach it at `http://<this-machine's-LAN-IP>:8501`:
+
+```powershell
+.\run_local.ps1
+```
+
+**Windows Firewall / network profile:** if your network connection is set to
+"Public" (Windows' default for unrecognized networks), inbound connections
+from *other* devices are blocked by default even though the server is
+listening — only this machine can reach itself. Either:
+
+- Switch the network to "Private" in Settings → Network & Internet (only do
+  this for a network you actually trust, e.g. your home/office Wi-Fi), or
+- Allow the port explicitly, from an **elevated** (Run as Administrator) PowerShell:
+  ```powershell
+  New-NetFirewallRule -DisplayName "AI-SoulMatch" -Direction Inbound -Protocol TCP -LocalPort 8501 -Action Allow
+  ```
+
+**Persistence across reboots:** `run_local.ps1` runs in the foreground of
+whatever terminal launches it — closing that terminal stops the app. For a
+volunteer team that needs this always available, set it up as a scheduled
+task that starts at logon (Task Scheduler → Create Task → Trigger: "At log
+on" → Action: run `powershell.exe -File run_local.ps1`), or use a tool like
+[NSSM](https://nssm.cc/) to register it as a proper Windows service.
+
+**Backups:** nothing backs up `data/soulmatch.db` (all profiles/matches/tasks)
+or `uploads/` (documents/photos) automatically. If this machine's disk fails,
+that data is gone. Point a scheduled copy of both folders at another drive or
+cloud-synced folder.
+
 ## How it works
 
 - **Ingest**: upload a WhatsApp "Export Chat" `.txt` or `.zip` file. Messages are
@@ -135,3 +168,9 @@ Any signed-in user can change their own password from the sidebar.
 ```powershell
 pytest
 ```
+
+## Roadmap & Open Items
+
+See [ROADMAP.md](ROADMAP.md) for the current punch list — what to do before
+trusting this with real data long-term, production-hardening items, features
+deliberately deferred (and why), and nice-to-have enhancements.
