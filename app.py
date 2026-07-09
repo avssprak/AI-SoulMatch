@@ -61,8 +61,9 @@ profiles = st.Page("pages_/3_Profiles.py", title="Profiles", icon="🗂️")
 matching = st.Page("pages_/4_Matching.py", title="Matching", icon="💘")
 astro = st.Page("pages_/5_Astrology.py", title="Astrology", icon="🔯")
 tasks = st.Page("pages_/6_Tasks.py", title="Tasks", icon="✅")
+search = st.Page("pages_/8_Search.py", title="Search & Insights", icon="🔍")
 
-pages = [dashboard, ingest, profiles, matching, astro, tasks]
+pages = [dashboard, ingest, profiles, matching, astro, tasks, search]
 if auth.is_admin(current["role"]):
     pages.append(st.Page("pages_/7_Users.py", title="Users", icon="👤"))
 

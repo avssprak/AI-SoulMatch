@@ -60,6 +60,11 @@ own admin account via the Users page and deactivate the default one.
   counts, recent activity.
 - **Users** (Administrator only): create accounts, assign roles, deactivate/
   reactivate, reset passwords.
+- **Search & Insights**: a natural-language search box ("Brahmin brides in
+  Bangalore under 28 with a horoscope") translated into structured profile
+  filters, plus a Quick Insights panel — pending horoscope, incomplete
+  profiles, top astrology-scored matches, stale cases (no activity in 14+
+  days), and a best-match finder for any profile.
 
 ## Accounts & roles
 
@@ -112,6 +117,18 @@ Any signed-in user can change their own password from the sidebar.
   (stdlib `hashlib`, no extra dependency), the same scheme Django uses by
   default. Each page calls `auth.require_login()` itself (not just `app.py`)
   since Streamlit pages are independently runnable scripts.
+- Natural language search (`soulmatch/search.py`) translates free text into a
+  structured filter object, never a raw query string — the LLM (or offline
+  mock parser) only ever fills in known fields, so there's no SQL injection
+  surface. The mock parser matches distinct values already in the database
+  (religion, caste, location, ...) against the query text, so it adapts to
+  real data without a hardcoded vocabulary.
+- Quick Insights (`soulmatch/insights.py`) are deterministic database queries,
+  not LLM calls — questions like "which profiles are incomplete" or "who has
+  the highest horoscope score" don't need natural-language reasoning to
+  answer correctly, so they're free and instant. The LLM is reserved for
+  where free text genuinely needs interpretation (search parsing, match
+  narratives).
 
 ## Tests
 
