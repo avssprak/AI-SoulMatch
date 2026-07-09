@@ -24,6 +24,12 @@ copy .env.example .env
 streamlit run app.py
 ```
 
+On first run, a default admin account is created automatically — username
+`admin`, password `changeme123` (or whatever you set `BOOTSTRAP_ADMIN_USERNAME` /
+`BOOTSTRAP_ADMIN_PASSWORD` to in `.env` before that first run). **Change the
+password immediately** via the sidebar "Change password" panel, or create your
+own admin account via the Users page and deactivate the default one.
+
 ## How it works
 
 - **Ingest**: upload a WhatsApp "Export Chat" `.txt` or `.zip` file. Messages are
@@ -52,6 +58,22 @@ streamlit run app.py
   as the reminder mechanism.
 - **Dashboard**: pipeline funnel, score distribution, pending/overdue task
   counts, recent activity.
+- **Users** (Administrator only): create accounts, assign roles, deactivate/
+  reactivate, reset passwords.
+
+## Accounts & roles
+
+Sign-in is required for every page. Four staff-facing roles (the PRD's
+Family/Bride/Groom self-service roles are deferred to a future parent-portal
+phase — there's no UI surface for them yet):
+
+| Role | Can do |
+|---|---|
+| **Administrator** | Everything, plus the Users page (create accounts, assign roles, deactivate, reset passwords) |
+| **Volunteer** / **Coordinator** | Full read/write: ingest, edit profiles, upload documents, manage tasks, evaluate and save matches |
+| **Viewer** | Read-only: browse profiles/documents/tasks/matches and evaluate matches, but cannot save, edit, upload, or ingest anything |
+
+Any signed-in user can change their own password from the sidebar.
 
 ## Architecture notes
 
@@ -83,6 +105,13 @@ streamlit run app.py
   mechanism: no push/email/WhatsApp delivery in this MVP, "reminders" surface
   as overdue/upcoming counters on the Dashboard and a filterable board on the
   Tasks page that a volunteer checks.
+- Auth (`soulmatch/auth.py`) is server-side session state, not JWT — this is
+  a single-process Streamlit app, not a multi-service API, so a signed token
+  would add complexity (secret rotation, cookie storage) without a security
+  benefit over `st.session_state`. Passwords are hashed with PBKDF2-HMAC-SHA256
+  (stdlib `hashlib`, no extra dependency), the same scheme Django uses by
+  default. Each page calls `auth.require_login()` itself (not just `app.py`)
+  since Streamlit pages are independently runnable scripts.
 
 ## Tests
 

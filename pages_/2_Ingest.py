@@ -2,7 +2,7 @@ from datetime import date
 
 import streamlit as st
 
-from soulmatch import config
+from soulmatch import auth, config
 from soulmatch.db import get_session
 from soulmatch.duplicates import find_duplicate_candidates
 from soulmatch.extraction.extractor import extract_profile, is_likely_profile
@@ -10,7 +10,12 @@ from soulmatch.extraction.llm import LLMError
 from soulmatch.ingest.whatsapp_export import parse_export
 from soulmatch.models import Activity, Profile, RawMessage
 
+current_user = auth.require_login()
 st.title("📥 Ingest — WhatsApp Chat Export")
+
+if not auth.can_edit(current_user["role"]):
+    st.info("Your account has read-only (Viewer) access. Sign in with an editor role to ingest messages.")
+    st.stop()
 
 st.markdown(
     """

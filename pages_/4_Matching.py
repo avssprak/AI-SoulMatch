@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 from sqlalchemy import select
 
+from soulmatch import auth
 from soulmatch.astrology.engine import AstrologyError, BirthDetails, build_chart, full_compatibility
 from soulmatch.db import get_session
 from soulmatch.extraction.llm import LLMError
@@ -11,7 +12,12 @@ from soulmatch.matching.rules import evaluate_match
 from soulmatch.models import Activity, MatchResult, Profile
 from soulmatch.recommendation import generate_recommendation
 
+current_user = auth.require_login()
+can_write = auth.can_edit(current_user["role"])
+
 st.title("💘 Matching Engine")
+if not can_write:
+    st.caption("Your account has read-only (Viewer) access — you can evaluate matches but not save results.")
 
 with get_session() as session:
     brides = session.scalars(select(Profile).where(Profile.gender == "Bride")).all()
@@ -152,7 +158,7 @@ with tab_single:
             st.markdown(f"**Career compatibility:** {recommendation.get('career_compatibility', '')}")
             st.caption(f"Generated via {recommendation.get('_provider', 'unknown')} provider")
 
-        if st.button("Save this match result", type="primary"):
+        if can_write and st.button("Save this match result", type="primary"):
             with get_session() as session2:
                 mr = MatchResult(
                     bride_id=bride_id, groom_id=groom_id,

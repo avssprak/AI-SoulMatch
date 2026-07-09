@@ -2,9 +2,11 @@ from datetime import date
 
 import streamlit as st
 
+from soulmatch import auth
 from soulmatch.astrology.engine import AstrologyError, BirthDetails, build_chart, chart_summary
 from soulmatch.astrology.geo import lookup as geo_lookup
 
+auth.require_login()
 st.title("🔯 Astrology Explorer")
 st.caption("Standalone chart lookup (Lahiri sidereal) — useful for verifying a horoscope without a full match.")
 

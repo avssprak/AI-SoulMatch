@@ -3,10 +3,12 @@ import plotly.express as px
 import streamlit as st
 from sqlalchemy import select
 
+from soulmatch import auth
 from soulmatch.db import get_session
 from soulmatch.models import Activity, MatchResult, Profile
 from soulmatch.tasks import overdue_tasks, pending_tasks
 
+auth.require_login()
 st.title("📊 Executive Dashboard")
 
 with get_session() as session:

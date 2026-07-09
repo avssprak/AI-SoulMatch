@@ -45,6 +45,25 @@ STANDARD_TASK_TITLES = [
     "Schedule second meeting",
 ]
 
+# Staff-facing roles. Family/Bride/Groom self-service roles from the PRD are
+# deferred to a future parent-portal phase — there's no UI surface for them
+# yet, and a role with nothing it can do is a half-finished feature.
+ROLES = ["Administrator", "Volunteer", "Coordinator", "Viewer"]
+EDITOR_ROLES = {"Administrator", "Volunteer", "Coordinator"}
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    username: Mapped[str] = mapped_column(String(100), unique=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    full_name: Mapped[str | None] = mapped_column(String(255))
+    role: Mapped[str] = mapped_column(String(30), default="Volunteer")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_login: Mapped[datetime | None] = mapped_column(DateTime)
+
 
 class RawMessage(Base):
     __tablename__ = "raw_messages"
