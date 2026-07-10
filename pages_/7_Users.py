@@ -5,10 +5,12 @@ from sqlalchemy import select
 from soulmatch import auth
 from soulmatch.db import get_session
 from soulmatch.models import ROLES, User
+from soulmatch.ui import flash, show_flash
 
 current_user = auth.require_admin()
 
 st.title("👤 Users")
+show_flash()
 st.caption("Administrator only. Roles: Administrator (full access + user management), "
            "Volunteer / Coordinator (create/edit everything), Viewer (read-only).")
 
@@ -47,7 +49,7 @@ with st.form("create_user", clear_on_submit=True):
                 else:
                     auth.create_user(session, new_username, new_password, new_full_name, new_role)
                     session.commit()
-                    st.success(f"User '{new_username}' created.")
+                    flash(f"User '{new_username}' created.")
                     st.rerun()
 
 st.divider()
@@ -68,7 +70,7 @@ if users:
             if new_role_choice != target.role and st.button("Update role"):
                 target.role = new_role_choice
                 session.commit()
-                st.success("Role updated.")
+                flash("Role updated.")
                 st.rerun()
         with col2:
             if target.id == current_user["id"]:
@@ -77,11 +79,13 @@ if users:
                 if st.button("Deactivate"):
                     target.is_active = False
                     session.commit()
+                    flash(f"'{target.username}' deactivated.")
                     st.rerun()
             else:
                 if st.button("Reactivate"):
                     target.is_active = True
                     session.commit()
+                    flash(f"'{target.username}' reactivated.")
                     st.rerun()
         with col3:
             with st.popover("Reset password"):

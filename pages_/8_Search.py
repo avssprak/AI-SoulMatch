@@ -1,18 +1,10 @@
 import pandas as pd
 import streamlit as st
-from sqlalchemy import select
 
 from soulmatch import auth, config
 from soulmatch.db import get_session
 from soulmatch.extraction.llm import LLMError
-from soulmatch.insights import (
-    best_matches_for,
-    incomplete_profiles,
-    pending_horoscope,
-    stale_cases,
-    top_astrology_matches,
-)
-from soulmatch.models import Profile
+from soulmatch.insights import incomplete_profiles, pending_horoscope, stale_cases, top_astrology_matches
 from soulmatch.search import apply_filters, describe_filters, parse_query
 
 auth.require_login()
@@ -21,9 +13,15 @@ st.title("🔍 Search & Insights")
 tab_search, tab_insights = st.tabs(["Natural Language Search", "Quick Insights"])
 
 with tab_search:
-    st.caption(f"Provider: **{config.LLM_PROVIDER}**. Examples: "
+    st.caption(f"AI service: **{config.LLM_PROVIDER}**. Examples: "
                "\"Show Brahmin girls in Bangalore\", \"software engineers below 30\", "
                "\"grooms with pending horoscope\".")
+    if config.LLM_PROVIDER == "mock":
+        st.warning(
+            "⚠️ Offline extraction mode — search still works via a simpler keyword matcher, but "
+            "understands fewer phrasings than a real AI service. Add a GEMINI_API_KEY or "
+            "ANTHROPIC_API_KEY in .env and restart the app for better results."
+        )
     query_text = st.text_input("Search", placeholder="Describe who you're looking for...")
     if st.button("Search", type="primary") and query_text.strip():
         with get_session() as session:
@@ -33,17 +31,52 @@ with tab_search:
                 st.error(str(e))
                 filters = None
             if filters is not None:
-                st.caption(f"Parsed as: {describe_filters(filters)}")
                 results = apply_filters(session, filters)
-                st.write(f"**{len(results)} result(s)**")
-                if results:
-                    rows = [{
+                st.session_state["search_results"] = {
+                    "query": query_text,
+                    "filters_desc": describe_filters(filters),
+                    "rows": [{
                         "ID": p.id, "Name": p.full_name, "Gender": p.gender, "Age": p.age,
                         "Religion": p.religion, "Caste": p.caste, "Location": p.current_location,
                         "Qualification": p.qualification, "Occupation": p.occupation,
                         "Stage": p.stage, "Horoscope": "Yes" if p.horoscope_available else "No",
-                    } for p in results]
-                    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+                    } for p in results],
+                }
+        st.rerun()
+
+    search_state = st.session_state.get("search_results")
+    if search_state and search_state["query"] == query_text:
+        st.caption(f"Parsed as: {search_state['filters_desc']}")
+        rows = search_state["rows"]
+        st.write(f"**{len(rows)} result(s)**")
+        if rows:
+            results_df = pd.DataFrame(rows)
+            st.download_button(
+                "⬇️ Export as CSV", results_df.to_csv(index=False).encode("utf-8-sig"),
+                file_name="search_results.csv", mime="text/csv", key="export_search_csv",
+            )
+            search_event = st.dataframe(
+                results_df, width="stretch", hide_index=True,
+                on_select="rerun", selection_mode="single-row", key="search_results_table",
+            )
+            st.caption("Click a row for a quick summary.")
+
+            selected_search_rows = (
+                search_event.selection.rows if search_event and search_event.selection else []
+            )
+            if selected_search_rows:
+                picked = results_df.iloc[selected_search_rows[0]]
+                with st.container(border=True):
+                    st.markdown(f"**#{picked['ID']} {picked['Name'] or 'Unnamed'}** — {picked['Gender']}")
+                    c1, c2, c3 = st.columns(3)
+                    c1.markdown(f"**Age:** {picked['Age'] or '—'}")
+                    c2.markdown(f"**Location:** {picked['Location'] or '—'}")
+                    c3.markdown(f"**Stage:** {picked['Stage']}")
+                    c1, c2, c3 = st.columns(3)
+                    c1.markdown(f"**Religion:** {picked['Religion'] or '—'}")
+                    c2.markdown(f"**Caste:** {picked['Caste'] or '—'}")
+                    c3.markdown(f"**Horoscope:** {picked['Horoscope']}")
+                    st.caption("Open **Profiles** and select this ID to edit, view documents, or manage tasks.")
 
 with tab_insights:
     with get_session() as session:
@@ -86,22 +119,8 @@ with tab_insights:
 
         st.divider()
         st.subheader("Best Match Finder")
-        all_profiles = session.scalars(select(Profile)).all()
-        if all_profiles:
-            subject_id = st.selectbox(
-                "Find best matches for", [p.id for p in all_profiles],
-                format_func=lambda pid: next(
-                    f"#{p.id} {p.full_name or 'Unnamed'} ({p.gender})" for p in all_profiles if p.id == pid
-                ),
-            )
-            if st.button("Find best matches"):
-                matches = best_matches_for(session, subject_id)
-                if not matches:
-                    st.info("No opposite-gender profiles to compare against.")
-                else:
-                    st.dataframe(pd.DataFrame([{
-                        "Candidate #": c.id, "Name": c.full_name, "Score": f"{outcome.score}%",
-                        "Mandatory OK": outcome.mandatory_passed, "Recommended": outcome.recommended,
-                    } for c, outcome in matches]), width="stretch", hide_index=True)
-        else:
-            st.info("No profiles yet.")
+        st.caption(
+            "Moved — use **Matching → Find Matches For One Profile** for this. "
+            "That version also includes astrology koota scores and lets you drill into "
+            "full match detail (AI recommendation, save result) for any candidate."
+        )

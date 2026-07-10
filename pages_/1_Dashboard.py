@@ -5,7 +5,8 @@ from sqlalchemy import select
 
 from soulmatch import auth
 from soulmatch.db import get_session
-from soulmatch.models import Activity, MatchResult, Profile
+from soulmatch.insights import stale_cases
+from soulmatch.models import PIPELINE_STAGES, Activity, MatchResult, Profile
 from soulmatch.tasks import overdue_tasks, pending_tasks
 
 auth.require_login()
@@ -19,37 +20,54 @@ with get_session() as session:
     ).all()
     pending_task_count = len(pending_tasks(session))
     overdue_task_count = len(overdue_tasks(session))
+    stale_case_count = len(stale_cases(session))
+
+    profile_ids = {a.profile_id for a in recent_activity}
+    activity_profile_names = {
+        p.id: p.full_name
+        for p in session.scalars(select(Profile).where(Profile.id.in_(profile_ids))).all()
+    }
 
 total = len(profiles)
 brides = sum(1 for p in profiles if p.gender == "Bride")
 grooms = sum(1 for p in profiles if p.gender == "Groom")
-pending_horoscope = sum(1 for p in profiles if not p.horoscope_available)
+pending_horoscope_count = sum(1 for p in profiles if not p.horoscope_available)
 active_cases = sum(1 for p in profiles if p.stage not in ("Marriage", "Rejected", "Closed"))
 marriages = sum(1 for p in profiles if p.stage == "Marriage")
 
-c1, c2, c3, c4, c5, c6, c7, c8 = st.columns(8)
-c1.metric("Total Profiles", total)
-c2.metric("Brides", brides)
-c3.metric("Grooms", grooms)
-c4.metric("Active Cases", active_cases)
-c5.metric("Pending Horoscope", pending_horoscope)
-c6.metric("Marriages", marriages)
-c7.metric("Pending Tasks", pending_task_count)
-c8.metric("Overdue Tasks", overdue_task_count)
+row1 = st.columns(4)
+row1[0].metric("Active Cases", active_cases)
+row1[0].caption("→ Profiles: filter by Stage")
+row1[1].metric("Pending Horoscope", pending_horoscope_count)
+row1[1].caption("→ Astrology: compute & save a chart")
+row1[2].metric("Overdue Tasks", overdue_task_count)
+row1[2].caption("→ Tasks: Overdue only")
+row1[3].metric("Stale Cases", stale_case_count)
+row1[3].caption("→ Search & Insights: Quick Insights")
+
+row2 = st.columns(4)
+row2[0].metric("Total Profiles", total)
+row2[1].metric("Brides", brides)
+row2[2].metric("Grooms", grooms)
+row2[3].metric("Marriages", marriages)
+st.caption(f"Pending Tasks: {pending_task_count}")
 
 st.divider()
 
 col1, col2 = st.columns(2)
 
 with col1:
-    st.subheader("Pipeline Stage Distribution")
+    st.subheader("Case Status Distribution")
     if profiles:
-        stage_counts = pd.Series([p.stage for p in profiles]).value_counts().reset_index()
+        stage_counts = pd.Series([p.stage for p in profiles]).value_counts().reindex(
+            PIPELINE_STAGES, fill_value=0
+        ).reset_index()
         stage_counts.columns = ["stage", "count"]
         fig = px.bar(stage_counts, x="stage", y="count")
+        fig.update_xaxes(categoryorder="array", categoryarray=PIPELINE_STAGES)
         st.plotly_chart(fig, width='stretch')
     else:
-        st.info("No profiles yet — go to **Ingest WhatsApp** to add some.")
+        st.info("No profiles yet — go to **Import Messages** to add some.")
 
 with col2:
     st.subheader("Match Compatibility Scores")
@@ -64,6 +82,10 @@ st.divider()
 st.subheader("Recent Activity")
 if recent_activity:
     for a in recent_activity:
-        st.markdown(f"**{a.created_at:%d %b, %H:%M}** — {a.event}" + (f": {a.detail}" if a.detail else ""))
+        name = activity_profile_names.get(a.profile_id) or "Unnamed"
+        st.markdown(
+            f"**{a.created_at:%d %b, %H:%M}** — {a.event} · {name} (#{a.profile_id})"
+            + (f": {a.detail}" if a.detail else "")
+        )
 else:
     st.caption("No activity recorded yet.")

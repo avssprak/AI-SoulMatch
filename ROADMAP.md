@@ -4,6 +4,10 @@ Snapshot as of 2026-07-10, when local hosting was first set up. Update this
 file as items are closed or reprioritized — it's the single source of truth
 for "what's left."
 
+> UI/UX improvements have their own execution backlog in `SPRINT_PLAN.md`
+> (created 2026-07-10 from a PM/UX review) — work those sprints from there;
+> this file stays focused on infra/strategy.
+
 ## MVP status: functional, hosted locally, not yet hardened for unattended production use
 
 All PRD Phase 1–3 features are built and tested (WhatsApp export ingestion,

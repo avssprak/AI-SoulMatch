@@ -1,6 +1,7 @@
 """Central configuration, loaded from .env / environment variables."""
 
 import os
+import secrets
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -13,9 +14,16 @@ UPLOAD_DIR = PROJECT_ROOT / "uploads"
 
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{(DATA_DIR / 'soulmatch.db').as_posix()}")
 
+# Signs the persistent-login token (see soulmatch.auth.mint_session_token). If unset,
+# a random key is generated for this process only — logins won't survive a server
+# restart until a fixed SECRET_KEY is set in .env.
+_env_secret_key = os.getenv("SECRET_KEY", "")
+SECRET_KEY = _env_secret_key or secrets.token_hex(32)
+SECRET_KEY_IS_EPHEMERAL = not _env_secret_key
+
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "mock").lower()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
 

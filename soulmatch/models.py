@@ -35,6 +35,27 @@ PIPELINE_STAGES = [
     "Closed",
 ]
 
+# Presentation-only grouping for stage dropdowns/charts — PIPELINE_STAGES
+# above is the stored, ordered list of values (unchanged); this just labels
+# runs of it for a shorter dropdown scan. Note the "Outcome" group's member
+# named "Engagement" is a specific pipeline stage (the ceremony milestone),
+# distinct from this dict's "Outreach" group label — kept as two different
+# words on purpose to avoid the confusing double meaning "Engagement" would
+# have as both a group label and a stage name in the same dropdown.
+PIPELINE_STAGE_GROUPS: dict[str, list[str]] = {
+    "Screening": ["New", "AI Extracted", "Validated", "Minimum Screening", "Astrology Completed"],
+    "Outreach": ["Parents Contacted", "Interested", "Call Scheduled", "Video Meeting", "Family Meeting", "Proposal Sent"],
+    "Outcome": ["Engagement", "Marriage", "Rejected", "Closed"],
+}
+_STAGE_TO_GROUP = {stage: group for group, stages in PIPELINE_STAGE_GROUPS.items() for stage in stages}
+
+
+def stage_group_label(stage: str) -> str:
+    """'Screening — New' style label for grouped stage dropdowns (see PIPELINE_STAGE_GROUPS)."""
+    group = _STAGE_TO_GROUP.get(stage)
+    return f"{group} — {stage}" if group else stage
+
+
 TASK_STATUSES = ["Pending", "Done", "Cancelled"]
 
 STANDARD_TASK_TITLES = [
@@ -63,6 +84,10 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_login: Mapped[datetime | None] = mapped_column(DateTime)
+    # Bumped on logout to invalidate every outstanding persistent-login token for
+    # this user (see soulmatch.auth) — a stale token embeds the epoch it was
+    # minted under, and validation requires it to still match.
+    session_epoch: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class RawMessage(Base):
@@ -162,6 +187,7 @@ class Document(Base):
     filename: Mapped[str] = mapped_column(String(500))
     path: Mapped[str] = mapped_column(String(1000))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
 
     profile: Mapped[Profile | None] = relationship(back_populates="documents")
 
@@ -180,6 +206,7 @@ class MatchResult(Base):
     recommendation: Mapped[str | None] = mapped_column(String(50))
     notes: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
 
 
 class Activity(Base):
@@ -190,6 +217,7 @@ class Activity(Base):
     event: Mapped[str] = mapped_column(String(255))
     detail: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
 
     profile: Mapped[Profile] = relationship(back_populates="activities")
 
@@ -207,5 +235,6 @@ class Task(Base):
     notes: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
 
     profile: Mapped[Profile] = relationship(back_populates="tasks")

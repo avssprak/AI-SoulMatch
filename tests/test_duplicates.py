@@ -1,7 +1,13 @@
 from datetime import date
 
-from soulmatch.duplicates import find_duplicate_candidates, name_similarity
-from soulmatch.models import Base, Profile
+from soulmatch.duplicates import (
+    find_all_duplicate_pairs,
+    find_duplicate_candidates,
+    merge_into_profile,
+    merge_profiles,
+    name_similarity,
+)
+from soulmatch.models import Activity, Base, Document, MatchResult, Profile, Task
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
@@ -77,3 +83,85 @@ def test_exclude_id_skips_self():
         exclude_id=p.id,
     )
     assert candidates == []
+
+
+def test_find_all_duplicate_pairs_finds_and_dedupes_pair():
+    session = _memory_session()
+    session.add(Profile(full_name="Priya Sharma", gender="Bride", phone="9876543210"))
+    session.add(Profile(full_name="Priya Sharma", gender="Bride", phone="9876543210"))
+    session.add(Profile(full_name="Anjali Rao", gender="Bride", phone="9111111111"))
+    session.commit()
+
+    pairs = find_all_duplicate_pairs(session)
+    assert len(pairs) == 1  # not reported twice (once as A-B, once as B-A)
+    assert pairs[0].score >= 60
+
+
+def test_find_all_duplicate_pairs_empty_when_no_overlap():
+    session = _memory_session()
+    session.add(Profile(full_name="Priya Sharma", gender="Bride", phone="9876543210"))
+    session.add(Profile(full_name="Anjali Rao", gender="Bride", phone="9111111111"))
+    session.commit()
+
+    assert find_all_duplicate_pairs(session) == []
+
+
+def test_merge_into_profile_fills_gaps_without_overwriting():
+    session = _memory_session()
+    target = Profile(full_name="Priya Sharma", gender="Bride", phone="9876543210")
+    session.add(target)
+    session.commit()
+
+    filled = merge_into_profile(target, {"phone": "0000000000", "caste": "Brahmin", "religion": None})
+    assert "phone" not in filled  # already set, not overwritten
+    assert target.phone == "9876543210"
+    assert "caste" in filled
+    assert target.caste == "Brahmin"
+    assert "religion" not in filled  # incoming value was None
+
+
+def test_merge_into_profile_merges_expectations_dict_key_by_key():
+    session = _memory_session()
+    target = Profile(full_name="Priya", gender="Bride", expectations={"age": "existing-pref"})
+    session.add(target)
+    session.commit()
+
+    filled = merge_into_profile(target, {"expectations": {"age": "should-not-overwrite", "location": "Bangalore"}})
+    assert "expectations" in filled
+    assert target.expectations == {"age": "existing-pref", "location": "Bangalore"}
+
+
+def test_merge_profiles_moves_children_and_deletes_duplicate():
+    session = _memory_session()
+    keep = Profile(full_name="Priya Sharma", gender="Bride", phone="9876543210")
+    remove = Profile(full_name="Priya Sharma", gender="Bride", caste="Brahmin")
+    session.add_all([keep, remove])
+    session.commit()
+
+    session.add(Document(profile_id=remove.id, kind="biodata", filename="bio.pdf", path="/tmp/bio.pdf"))
+    session.add(Task(profile_id=remove.id, title="Call parents"))
+    session.add(Activity(profile_id=remove.id, event="Profile Created"))
+    other = Profile(full_name="Ravi", gender="Groom")
+    session.add(other)
+    session.commit()
+    session.add(MatchResult(bride_id=remove.id, groom_id=other.id, practical_score=80))
+    session.commit()
+    removed_id = remove.id
+
+    summary = merge_profiles(session, keep=keep, remove=remove, created_by_user_id=42)
+
+    assert summary["documents"] == 1
+    assert summary["tasks"] == 1
+    assert summary["matches"] == 1
+    assert "caste" in summary["filled"]
+    assert keep.caste == "Brahmin"  # gap filled from the removed profile
+
+    merge_activity = session.query(Activity).filter_by(profile_id=keep.id, event="Profiles Merged").one()
+    assert merge_activity.created_by_user_id == 42
+
+    assert session.get(Profile, removed_id) is None  # removed profile is gone
+    assert session.query(Document).filter_by(profile_id=keep.id).count() == 1
+    assert session.query(Task).filter_by(profile_id=keep.id).count() == 1
+    assert session.query(MatchResult).filter_by(bride_id=keep.id).count() == 1
+    # the pre-existing activity plus the merge-summary activity now both live on keep
+    assert session.query(Activity).filter_by(profile_id=keep.id).count() == 2

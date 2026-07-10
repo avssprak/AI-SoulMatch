@@ -1,9 +1,16 @@
 """Authentication & role-based access control.
 
-Session-based auth, not JWT: this is a single-process Streamlit app, not a
-multi-service API, so a signed token would add complexity (secret rotation,
-cookie storage) without a security benefit over server-side session state —
-`st.session_state["user"]` is already tied to one authenticated session.
+`st.session_state["user"]` holds the authenticated user for the current
+connection, but Streamlit ties session_state to the browser's WebSocket —
+a page refresh opens a new one and drops it, logging the user out. To survive
+a refresh (and a browser restart within the expiry window) without a new
+dependency, `mint_session_token`/`validate_session_token` below sign a small
+JSON payload (user id + a password-hash fingerprint + expiry) with HMAC-SHA256
+and carry it in `st.query_params` — restored at app startup in `app.py`. This
+is not general-purpose JWT/API auth (no key rotation, no multi-service
+concerns); it exists solely to bridge Streamlit's per-connection session
+state across a refresh. Changing the password invalidates every outstanding
+token immediately, since the fingerprint is embedded in the signed payload.
 
 Passwords are hashed with PBKDF2-HMAC-SHA256 (stdlib `hashlib`, no extra
 dependency), the same scheme Django uses by default.
@@ -11,8 +18,12 @@ dependency), the same scheme Django uses by default.
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import hmac
+import json
 import os
+import time
 
 import streamlit as st
 from sqlalchemy import select
@@ -23,6 +34,7 @@ from .models import ROLES, EDITOR_ROLES, User, utcnow
 
 _PBKDF2_ITERATIONS = 260_000
 ADMIN_ROLE = "Administrator"
+SESSION_TOKEN_TTL_SECONDS = 7 * 24 * 3600
 
 
 def hash_password(password: str, salt: bytes | None = None) -> str:
@@ -67,6 +79,64 @@ def authenticate(session: Session, username: str, password: str) -> User | None:
 
 def change_password(session: Session, user: User, new_password: str) -> None:
     user.password_hash = hash_password(new_password)
+    session.commit()
+
+
+def _b64encode(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def _b64decode(text: str) -> bytes:
+    return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+
+
+def _sign(payload_b64: str) -> str:
+    digest = hmac.new(config.SECRET_KEY.encode(), payload_b64.encode(), hashlib.sha256).digest()
+    return _b64encode(digest)
+
+
+def mint_session_token(user: User, ttl_seconds: int = SESSION_TOKEN_TTL_SECONDS) -> str:
+    """Sign a token so login survives a browser refresh (see module docstring)."""
+    payload = {
+        "uid": user.id,
+        "pw": user.password_hash[:12],  # fingerprint only — invalidates on password change
+        "epoch": user.session_epoch,  # invalidates on logout (see logout_everywhere)
+        "exp": int(time.time()) + ttl_seconds,
+    }
+    payload_b64 = _b64encode(json.dumps(payload, separators=(",", ":")).encode())
+    return f"{payload_b64}.{_sign(payload_b64)}"
+
+
+def validate_session_token(session: Session, token: str) -> User | None:
+    """Reverse of mint_session_token; returns the user if the token is genuine,
+    unexpired, and still matches the user's current password."""
+    try:
+        payload_b64, signature = token.split(".", 1)
+    except ValueError:
+        return None
+    if not hmac.compare_digest(signature, _sign(payload_b64)):
+        return None
+    try:
+        payload = json.loads(_b64decode(payload_b64))
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if payload.get("exp", 0) < time.time():
+        return None
+    user = session.get(User, payload.get("uid"))
+    if user is None or not user.is_active:
+        return None
+    if user.password_hash[:12] != payload.get("pw"):
+        return None
+    if user.session_epoch != payload.get("epoch"):
+        return None
+    return user
+
+
+def logout_everywhere(session: Session, user: User) -> None:
+    """Bump the session epoch so every outstanding persistent-login token for
+    this user — including stale copies of the URL in another tab or bookmark —
+    stops validating immediately."""
+    user.session_epoch += 1
     session.commit()
 
 

@@ -59,29 +59,41 @@ with get_session() as session:
                 "Due": t.due_date.isoformat() if t.due_date else "—",
                 "Status": ("⚠️ " if overdue_flag else "") + t.status,
             })
-        df = pd.DataFrame(rows).drop(columns=["id"])
-        st.dataframe(df, width="stretch", hide_index=True)
+        df = pd.DataFrame(rows)
+        task_event = st.dataframe(
+            df.drop(columns=["id"]), width="stretch", hide_index=True,
+            on_select="rerun", selection_mode="single-row", key="tasks_table",
+        )
+        selected_task_rows = task_event.selection.rows if task_event and task_event.selection else []
+        row_selected_task_id = int(df.iloc[selected_task_rows[0]]["id"]) if selected_task_rows else None
+        if row_selected_task_id is not None:
+            st.caption("Row selected — jump to \"Mark task complete\" below.")
 
         pending_shown = [t for t in tasks if t.status == "Pending"]
         if can_write and pending_shown:
             st.subheader("Mark task complete")
+            options = [t.id for t in pending_shown]
+            default_index = options.index(row_selected_task_id) if row_selected_task_id in options else 0
             task_id = st.selectbox(
-                "Task", [t.id for t in pending_shown],
+                "Task", options,
+                index=default_index,
                 format_func=lambda tid: next(
                     f"#{t.profile_id} — {t.title} (due {t.due_date or 'no date'})"
                     for t in pending_shown if t.id == tid
                 ),
+                key=f"task_select_{row_selected_task_id}",
             )
-            col1, col2 = st.columns(2)
-            if col1.button("Mark Done", type="primary"):
-                task = session.get(Task, task_id)
-                task.status = "Done"
-                task.completed_at = utcnow()
-                session.add(Activity(profile_id=task.profile_id, event="Task completed", detail=task.title))
-                session.commit()
-                st.rerun()
-            if col2.button("Cancel Task"):
-                task = session.get(Task, task_id)
-                task.status = "Cancelled"
-                session.commit()
-                st.rerun()
+            with st.container(horizontal=True):
+                if st.button("Mark Done", type="primary"):
+                    task = session.get(Task, task_id)
+                    task.status = "Done"
+                    task.completed_at = utcnow()
+                    session.add(Activity(profile_id=task.profile_id, event="Task completed", detail=task.title,
+                                          created_by_user_id=current_user["id"]))
+                    session.commit()
+                    st.rerun()
+                if st.button("Cancel Task"):
+                    task = session.get(Task, task_id)
+                    task.status = "Cancelled"
+                    session.commit()
+                    st.rerun()

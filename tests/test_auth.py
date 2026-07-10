@@ -94,6 +94,82 @@ def test_ensure_bootstrap_admin_creates_once():
     assert session.query(User).count() == 1
 
 
+def test_session_token_roundtrip():
+    session = _memory_session()
+    user = auth.create_user(session, "user1", "correctpass", None, "Volunteer")
+    session.commit()
+
+    token = auth.mint_session_token(user)
+    restored = auth.validate_session_token(session, token)
+    assert restored is not None
+    assert restored.id == user.id
+
+
+def test_session_token_rejects_tampered_signature():
+    session = _memory_session()
+    user = auth.create_user(session, "user1", "correctpass", None, "Volunteer")
+    session.commit()
+
+    token = auth.mint_session_token(user)
+    payload_b64, _sig = token.split(".", 1)
+    tampered = f"{payload_b64}.not-the-real-signature"
+    assert auth.validate_session_token(session, tampered) is None
+
+
+def test_session_token_rejects_malformed_token():
+    session = _memory_session()
+    assert auth.validate_session_token(session, "not-a-valid-token") is None
+    assert auth.validate_session_token(session, "") is None
+
+
+def test_session_token_expires():
+    session = _memory_session()
+    user = auth.create_user(session, "user1", "correctpass", None, "Volunteer")
+    session.commit()
+
+    token = auth.mint_session_token(user, ttl_seconds=-1)  # already expired
+    assert auth.validate_session_token(session, token) is None
+
+
+def test_session_token_invalidated_by_password_change():
+    session = _memory_session()
+    user = auth.create_user(session, "user1", "oldpass123", None, "Volunteer")
+    session.commit()
+
+    token = auth.mint_session_token(user)
+    assert auth.validate_session_token(session, token) is not None
+
+    auth.change_password(session, user, "newpass456")
+    assert auth.validate_session_token(session, token) is None
+
+
+def test_session_token_invalidated_by_logout_everywhere():
+    session = _memory_session()
+    user = auth.create_user(session, "user1", "correctpass", None, "Volunteer")
+    session.commit()
+
+    token = auth.mint_session_token(user)
+    assert auth.validate_session_token(session, token) is not None
+
+    auth.logout_everywhere(session, user)
+    assert auth.validate_session_token(session, token) is None
+
+    # a freshly minted token after logout still works
+    new_token = auth.mint_session_token(user)
+    assert auth.validate_session_token(session, new_token) is not None
+
+
+def test_session_token_invalidated_by_deactivation():
+    session = _memory_session()
+    user = auth.create_user(session, "user1", "correctpass", None, "Volunteer")
+    session.commit()
+
+    token = auth.mint_session_token(user)
+    user.is_active = False
+    session.commit()
+    assert auth.validate_session_token(session, token) is None
+
+
 def test_can_edit_and_is_admin():
     assert auth.can_edit("Administrator")
     assert auth.can_edit("Volunteer")

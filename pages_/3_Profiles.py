@@ -7,24 +7,42 @@ from sqlalchemy import select
 from soulmatch import auth
 from soulmatch.db import get_session
 from soulmatch.documents import DOCUMENT_KINDS, delete_document, read_document, save_document
-from soulmatch.duplicates import find_duplicate_candidates
-from soulmatch.models import PIPELINE_STAGES, STANDARD_TASK_TITLES, Activity, Document, Profile, Task, utcnow
+from soulmatch.duplicates import find_all_duplicate_pairs, find_duplicate_candidates, merge_profiles
+from soulmatch.models import (
+    PIPELINE_STAGES, STANDARD_TASK_TITLES, Activity, Document, Profile, Task, User, stage_group_label, utcnow,
+)
+from soulmatch.profiles import delete_profile
+from soulmatch.ui import flash, show_flash
 
 current_user = auth.require_login()
 can_write = auth.can_edit(current_user["role"])
 
 st.title("🗂️ Profiles")
+show_flash()
 if not can_write:
     st.caption("Your account has read-only (Viewer) access.")
 
-tab_search, tab_manual = st.tabs(["Search & Manage", "Add Manually"])
+# A widget's session_state can only be written before that widget is instantiated
+# in a given run — so a delete/merge handler further down the script can't reset
+# "profiles_table"'s selection directly (the dataframe below already renders it
+# this run). It sets this flag and reruns instead; we consume it here, before
+# the table widget exists for the new run, avoiding a stale-row-index crash
+# after the table shrinks.
+if st.session_state.pop("_clear_profiles_selection", False):
+    st.session_state["profiles_table"] = {"selection": {"rows": [], "columns": [], "cells": []}}
+
+tab_search, tab_manual, tab_duplicates = st.tabs(["Search & Manage", "Add Manually", "🔍 Find Duplicate Profiles"])
 
 with tab_search:
-    col1, col2, col3, col4 = st.columns(4)
-    gender_filter = col1.selectbox("Gender", ["All", "Bride", "Groom"])
-    stage_filter = col2.selectbox("Stage", ["All"] + PIPELINE_STAGES)
-    religion_filter = col3.text_input("Religion contains")
-    location_filter = col4.text_input("Location contains")
+    col1, col2, col3, col4, col5 = st.columns(5)
+    name_filter = col1.text_input("Name contains")
+    gender_filter = col2.selectbox("Gender", ["All", "Bride", "Groom"])
+    stage_filter = col3.selectbox(
+        "Stage", ["All"] + PIPELINE_STAGES,
+        format_func=lambda s: s if s == "All" else stage_group_label(s),
+    )
+    religion_filter = col4.text_input("Religion contains")
+    location_filter = col5.text_input("Location contains")
 
     with get_session() as session:
         query = select(Profile)
@@ -34,6 +52,8 @@ with tab_search:
             query = query.where(Profile.stage == stage_filter)
         profiles = session.scalars(query.order_by(Profile.created_at.desc())).all()
 
+    if name_filter:
+        profiles = [p for p in profiles if p.full_name and name_filter.lower() in p.full_name.lower()]
     if religion_filter:
         profiles = [p for p in profiles if p.religion and religion_filter.lower() in p.religion.lower()]
     if location_filter:
@@ -48,23 +68,83 @@ with tab_search:
             "Qualification": p.qualification, "Occupation": p.occupation,
             "Stage": p.stage, "Horoscope": "Yes" if p.horoscope_available else "No",
         } for p in profiles]
-        st.dataframe(pd.DataFrame(rows), width='stretch', hide_index=True)
+        st.download_button(
+            "⬇️ Export as CSV", pd.DataFrame(rows).to_csv(index=False).encode("utf-8-sig"),
+            file_name="profiles.csv", mime="text/csv", key="export_profiles_csv",
+        )
+        table_event = st.dataframe(
+            pd.DataFrame(rows), width='stretch', hide_index=True,
+            on_select="rerun", selection_mode="multi-row", key="profiles_table",
+        )
+        st.caption("Tip: click a row to select that profile below — ctrl/shift-click to select several to bulk-delete.")
+        selected_rows = table_event.selection.rows if table_event and table_event.selection else []
+        row_selected_id = rows[selected_rows[0]]["ID"] if selected_rows else None
+        selected_ids = [rows[i]["ID"] for i in selected_rows]
 
+        if can_write and len(selected_ids) > 1:
+            bulk_confirm_key = "confirm_bulk_delete_profiles"
+            if bulk_confirm_key in st.session_state:
+                st.error(f"Really delete {len(selected_ids)} selected profile(s)? This cannot be undone.")
+                with st.container(horizontal=True):
+                    if st.button("Yes, delete all selected", key="confirm_bulk_delete_btn", type="primary"):
+                        with get_session() as bulk_session:
+                            deleted = 0
+                            for pid in selected_ids:
+                                target = bulk_session.get(Profile, pid)
+                                if target:
+                                    delete_profile(bulk_session, target)
+                                    deleted += 1
+                        del st.session_state[bulk_confirm_key]
+                        st.session_state["_clear_profiles_selection"] = True
+                        flash(f"Deleted {deleted} profile(s).")
+                        st.rerun()
+                    if st.button("Cancel", key="cancel_bulk_delete_btn"):
+                        del st.session_state[bulk_confirm_key]
+                        st.rerun()
+            elif st.button(f"🗑️ Delete {len(selected_ids)} selected profile(s)", key="bulk_delete_profiles_btn"):
+                st.session_state[bulk_confirm_key] = True
+                st.rerun()
+
+        options = [p.id for p in profiles]
+        default_index = options.index(row_selected_id) if row_selected_id in options else 0
         selected_id = st.selectbox(
             "View / edit a profile",
-            options=[p.id for p in profiles],
+            options=options,
+            index=default_index,
             format_func=lambda pid: next(f"#{p.id} — {p.full_name or 'Unnamed'}" for p in profiles if p.id == pid),
+            key=f"profile_select_{row_selected_id}",
         )
 
         with get_session() as session:
             profile = session.get(Profile, selected_id)
+
+            st.markdown(f"### #{profile.id} — {profile.full_name or 'Unnamed'}")
+            if can_write:
+                qc1, qc2 = st.columns([3, 1])
+                quick_stage = qc1.selectbox(
+                    "Stage", PIPELINE_STAGES, index=PIPELINE_STAGES.index(profile.stage),
+                    format_func=stage_group_label, key=f"quick_stage_{profile.id}",
+                    label_visibility="collapsed",
+                )
+                if qc2.button(
+                    "Move", key=f"quick_stage_move_{profile.id}", type="primary",
+                    disabled=quick_stage == profile.stage,
+                ):
+                    profile.stage = quick_stage
+                    session.add(Activity(profile_id=profile.id, event=f"Stage changed to {quick_stage}",
+                                          created_by_user_id=current_user["id"]))
+                    session.commit()
+                    flash(f"Moved to {quick_stage}.")
+                    st.rerun()
+            else:
+                st.caption(f"Stage: {profile.stage}")
 
             if can_write:
                 with st.form("edit_profile"):
                     c1, c2, c3 = st.columns(3)
                     full_name = c1.text_input("Full Name", profile.full_name or "")
                     gender = c2.selectbox("Gender", ["Bride", "Groom"], index=0 if profile.gender != "Groom" else 1)
-                    age = c3.number_input("Age", 18, 80, profile.age or 25)
+                    age = c3.number_input("Age", 18, 100, min(max(profile.age or 25, 18), 100))
 
                     c1, c2, c3 = st.columns(3)
                     religion = c1.text_input("Religion", profile.religion or "")
@@ -82,13 +162,18 @@ with tab_search:
                     birth_place = c3.text_input("Birth Place", profile.birth_place or "")
 
                     c1, c2 = st.columns(2)
-                    height_cm = c1.number_input("Height (cm)", 100.0, 220.0, profile.height_cm or 165.0)
+                    height_cm = c1.number_input(
+                        "Height (cm)", 100.0, 250.0, min(max(profile.height_cm or 165.0, 100.0), 250.0)
+                    )
                     food_preference = c2.selectbox(
                         "Food Preference", ["", "Vegetarian", "Non-Vegetarian", "Eggetarian"],
                         index=["", "Vegetarian", "Non-Vegetarian", "Eggetarian"].index(profile.food_preference or ""),
                     )
 
-                    stage = st.selectbox("Pipeline Stage", PIPELINE_STAGES, index=PIPELINE_STAGES.index(profile.stage))
+                    stage = st.selectbox(
+                        "Status", PIPELINE_STAGES, index=PIPELINE_STAGES.index(profile.stage),
+                        format_func=stage_group_label,
+                    )
                     notes = st.text_area("Notes", profile.notes or "")
 
                     if st.form_submit_button("Save changes", type="primary"):
@@ -110,9 +195,10 @@ with tab_search:
                         profile.stage = stage
                         profile.notes = notes or None
                         if stage_changed:
-                            session.add(Activity(profile_id=profile.id, event=f"Stage changed to {stage}"))
+                            session.add(Activity(profile_id=profile.id, event=f"Stage changed to {stage}",
+                                                  created_by_user_id=current_user["id"]))
                         session.commit()
-                        st.success("Saved.")
+                        flash("Saved.")
                         st.rerun()
             else:
                 c1, c2, c3 = st.columns(3)
@@ -165,11 +251,13 @@ with tab_search:
                         if doc_file is None:
                             st.warning("Choose a file first.")
                         else:
-                            save_document(session, profile.id, doc_kind, doc_file.name, doc_file.read())
+                            save_document(session, profile.id, doc_kind, doc_file.name, doc_file.read(),
+                                          created_by_user_id=current_user["id"])
                             if doc_kind == "horoscope":
                                 profile.horoscope_available = True
                             session.add(Activity(profile_id=profile.id, event="Document Uploaded",
-                                                  detail=f"{doc_kind}: {doc_file.name}"))
+                                                  detail=f"{doc_kind}: {doc_file.name}",
+                                                  created_by_user_id=current_user["id"]))
                             session.commit()
                             st.rerun()
 
@@ -193,7 +281,7 @@ with tab_search:
                             task.status = "Done"
                             task.completed_at = utcnow()
                             session.add(Activity(profile_id=profile.id, event="Task completed",
-                                                  detail=task.title))
+                                                  detail=task.title, created_by_user_id=current_user["id"]))
                             session.commit()
                             st.rerun()
                         if tcol3.button("Cancel", key=f"task_cancel_{task.id}"):
@@ -214,8 +302,10 @@ with tab_search:
                         if not final_title:
                             st.warning("Enter a task title.")
                         else:
-                            session.add(Task(profile_id=profile.id, title=final_title, due_date=due))
-                            session.add(Activity(profile_id=profile.id, event="Task added", detail=final_title))
+                            session.add(Task(profile_id=profile.id, title=final_title, due_date=due,
+                                              created_by_user_id=current_user["id"]))
+                            session.add(Activity(profile_id=profile.id, event="Task added", detail=final_title,
+                                                  created_by_user_id=current_user["id"]))
                             session.commit()
                             st.rerun()
 
@@ -223,8 +313,16 @@ with tab_search:
             activities = session.scalars(
                 select(Activity).where(Activity.profile_id == profile.id).order_by(Activity.created_at.desc())
             ).all()
+            actor_ids = {a.created_by_user_id for a in activities if a.created_by_user_id}
+            actor_names = {
+                u.id: (u.full_name or u.username)
+                for u in session.scalars(select(User).where(User.id.in_(actor_ids))).all()
+            } if actor_ids else {}
             for a in activities:
-                st.markdown(f"**{a.created_at:%d %b %Y, %H:%M}** — {a.event}" + (f": {a.detail}" if a.detail else ""))
+                who = f" by {actor_names[a.created_by_user_id]}" if a.created_by_user_id in actor_names else ""
+                st.markdown(
+                    f"**{a.created_at:%d %b %Y, %H:%M}** — {a.event}{who}" + (f": {a.detail}" if a.detail else "")
+                )
 
             if can_write:
                 with st.form("add_activity"):
@@ -232,8 +330,34 @@ with tab_search:
                     detail = st.text_input("Detail (optional)")
                     if st.form_submit_button("Log activity"):
                         if event:
-                            session.add(Activity(profile_id=profile.id, event=event, detail=detail or None))
+                            session.add(Activity(profile_id=profile.id, event=event, detail=detail or None,
+                                                  created_by_user_id=current_user["id"]))
                             session.commit()
+                            st.rerun()
+
+            if can_write:
+                st.divider()
+                with st.expander("🗑️ Delete this profile"):
+                    st.warning(
+                        "Permanently deletes this profile along with its documents, tasks, "
+                        "activity history, and any saved match results. This cannot be undone."
+                    )
+                    confirm_key = f"confirm_delete_profile_{profile.id}"
+                    if confirm_key in st.session_state:
+                        st.error(f"Really delete profile #{profile.id} — {profile.full_name or 'Unnamed'}?")
+                        with st.container(horizontal=True):
+                            if st.button("Yes, delete permanently", key=f"confirm_delete_profile_btn_{profile.id}", type="primary"):
+                                summary = delete_profile(session, profile)
+                                del st.session_state[confirm_key]
+                                st.session_state["_clear_profiles_selection"] = True
+                                flash(f"Deleted profile #{summary['id']}.")
+                                st.rerun()
+                            if st.button("Cancel", key=f"cancel_delete_profile_{profile.id}"):
+                                del st.session_state[confirm_key]
+                                st.rerun()
+                    else:
+                        if st.button("Delete this profile", key=f"delete_profile_{profile.id}"):
+                            st.session_state[confirm_key] = True
                             st.rerun()
     else:
         st.info("No profiles match these filters.")
@@ -290,19 +414,77 @@ with tab_manual:
             else:
                 st.success("No duplicates found.")
 
-            col1, col2 = st.columns([1, 1])
-            with col1:
+            with st.container(horizontal=True):
                 if st.button("Create profile" + (" anyway" if duplicates else ""), type="primary"):
                     with get_session() as session:
                         profile = Profile(stage="New", **pending)
                         session.add(profile)
                         session.flush()
-                        session.add(Activity(profile_id=profile.id, event="Profile Created", detail="Manual entry"))
+                        session.add(Activity(profile_id=profile.id, event="Profile Created", detail="Manual entry",
+                                              created_by_user_id=current_user["id"]))
                         session.commit()
                         new_id = profile.id
                     del st.session_state["pending_manual_profile"]
                     st.success(f"Created profile #{new_id}.")
-            with col2:
                 if st.button("Cancel"):
                     del st.session_state["pending_manual_profile"]
                     st.rerun()
+
+with tab_duplicates:
+    st.caption(
+        "Pairwise scan of every profile for likely duplicates (same gender, "
+        "matching phone/DOB/similar name) — for profiles that already exist, "
+        "not the message-level check shown while extracting a new one."
+    )
+    with get_session() as session:
+        pairs = find_all_duplicate_pairs(session)
+
+    if not pairs:
+        st.info("No likely duplicate profiles found.")
+    else:
+        st.caption(f"{len(pairs)} possible duplicate pair(s), highest match first.")
+        for pair in pairs:
+            a, b = pair.profile_a, pair.profile_b
+            label = (
+                f"#{a.id} {a.full_name or 'Unnamed'} ↔ #{b.id} {b.full_name or 'Unnamed'} "
+                f"— {pair.score}% match"
+            )
+            with st.expander(label):
+                st.markdown("; ".join(pair.reasons))
+                c1, c2 = st.columns(2)
+                c1.markdown(f"**#{a.id} {a.full_name or 'Unnamed'}**")
+                c1.caption(f"Created {a.created_at:%d %b %Y} · Stage: {a.stage}")
+                c2.markdown(f"**#{b.id} {b.full_name or 'Unnamed'}**")
+                c2.caption(f"Created {b.created_at:%d %b %Y} · Stage: {b.stage}")
+
+                if can_write:
+                    with st.container(horizontal=True):
+                        if st.button(f"Merge #{b.id} into #{a.id} (keep #{a.id})", key=f"merge_pair_{a.id}_{b.id}_a"):
+                            with get_session() as session:
+                                keep = session.get(Profile, a.id)
+                                remove = session.get(Profile, b.id)
+                                summary = merge_profiles(session, keep=keep, remove=remove,
+                                                          created_by_user_id=current_user["id"])
+                            # a profile just vanished from the Search & Manage table (rendered
+                            # regardless of which tab is active) — clear its selection so a
+                            # stale row index can't be indexed out of range on the rerun below
+                            st.session_state["_clear_profiles_selection"] = True
+                            flash(
+                                f"Merged #{b.id} into #{a.id}: filled {len(summary['filled'])} field(s), "
+                                f"moved {summary['documents']} document(s), {summary['tasks']} task(s), "
+                                f"{summary['matches']} match result(s)."
+                            )
+                            st.rerun()
+                        if st.button(f"Merge #{a.id} into #{b.id} (keep #{b.id})", key=f"merge_pair_{a.id}_{b.id}_b"):
+                            with get_session() as session:
+                                keep = session.get(Profile, b.id)
+                                remove = session.get(Profile, a.id)
+                                summary = merge_profiles(session, keep=keep, remove=remove,
+                                                          created_by_user_id=current_user["id"])
+                            st.session_state["_clear_profiles_selection"] = True
+                            flash(
+                                f"Merged #{a.id} into #{b.id}: filled {len(summary['filled'])} field(s), "
+                                f"moved {summary['documents']} document(s), {summary['tasks']} task(s), "
+                                f"{summary['matches']} match result(s)."
+                            )
+                            st.rerun()
