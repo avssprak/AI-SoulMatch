@@ -1,0 +1,32 @@
+<svg width="340" height="64" viewBox="0 0 340 64" xmlns="http://www.w3.org/2000/svg">
+  <!-- Full lockup, white wordmark (for dark hero backgrounds). -->
+  <defs>
+    <linearGradient id="smMaroonW" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#C4557A"/>
+      <stop offset="1" stop-color="#8A2A47"/>
+    </linearGradient>
+    <linearGradient id="smGoldW" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F2D680"/>
+      <stop offset="1" stop-color="#C9A227"/>
+    </linearGradient>
+    <linearGradient id="smSparkW" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FBC97E"/>
+      <stop offset="1" stop-color="#F4A950"/>
+    </linearGradient>
+  </defs>
+
+  <g transform="translate(2,2) scale(0.94)">
+    <path d="M32 10 L19 7 M32 10 L45 6" stroke="#F2D680" stroke-width="1.1" opacity="0.6" stroke-linecap="round" fill="none"/>
+    <circle cx="19" cy="7" r="1.9" fill="#F2D680" opacity="0.9"/>
+    <circle cx="45" cy="6" r="1.5" fill="#F2D680" opacity="0.75"/>
+    <path d="M32 55 C13 42 6.5 25 15.5 15.8 C21.5 9.6 29.5 12.4 31 20.5"
+          fill="none" stroke="url(#smMaroonW)" stroke-width="5.6" stroke-linecap="round"/>
+    <path d="M32 55 C51 42 57.5 25 48.5 15.8 C42.5 9.6 34.5 12.4 33 20.5"
+          fill="none" stroke="url(#smGoldW)" stroke-width="5.6" stroke-linecap="round"/>
+    <path d="M32 4.5 L36.5 10 L32 15.5 L27.5 10 Z" fill="url(#smSparkW)"/>
+  </g>
+
+  <text x="72" y="43" font-family="Georgia, 'Times New Roman', serif" font-size="29" font-weight="700" letter-spacing="0.2">
+    <tspan fill="#F2D680">AI</tspan><tspan fill="#FFF8EE">-SoulMatch</tspan>
+  </text>
+</svg>

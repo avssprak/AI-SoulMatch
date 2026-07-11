@@ -21,6 +21,7 @@ _COLUMN_MIGRATIONS = [
     ("documents", "created_by_user_id", "INTEGER"),
     ("tasks", "created_by_user_id", "INTEGER"),
     ("match_results", "created_by_user_id", "INTEGER"),
+    ("raw_messages", "error", "TEXT"),
 ]
 
 

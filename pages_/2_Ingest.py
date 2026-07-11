@@ -7,27 +7,125 @@ from sqlalchemy import select
 from soulmatch import auth, config
 from soulmatch.db import get_session
 from soulmatch.duplicates import find_duplicate_candidates, merge_into_profile
+
+# A duplicate score at or above this is treated as certainly the same person
+# (e.g. matching phone number scores 60 on its own) and gets auto-merged into
+# the existing profile during bulk processing instead of being left for
+# manual review — re-sent/updated biodata for someone already in the system
+# should update their record, not sit in a queue.
+AUTO_MERGE_SCORE_THRESHOLD = 60
 from soulmatch.extraction.extractor import extract_profile, is_likely_profile
 from soulmatch.extraction.llm import LLMError
+from soulmatch.ingest.document_import import parse_document
 from soulmatch.ingest.whatsapp_export import parse_export
 from soulmatch.models import Activity, Profile, RawMessage
+from soulmatch import theme
 from soulmatch.ui import flash, show_flash
 
+def _auto_process_raw_messages(message_ids: list[int], current_user: dict) -> None:
+    """Run extraction + duplicate-check + save/merge over the given raw
+    message ids, then flash a summary and rerun. Shared by the Review
+    queue's manual "Auto-process" button and the Import tab's "process
+    immediately after import" checkbox — one implementation of the
+    extraction loop, not two copies that drift apart."""
+    if not message_ids:
+        return
+    saved = merged = skipped_low_conf = skipped_dup = errors = 0
+    progress = st.progress(0.0, text="Starting…")
+    with get_session() as session:
+        for i, mid in enumerate(message_ids, start=1):
+            progress.progress(i / len(message_ids), text=f"Processing {i} of {len(message_ids)} — extracting…")
+            raw = session.get(RawMessage, mid)
+            if raw is None or raw.processed:
+                continue
+            try:
+                data = extract_profile(raw.content)
+            except LLMError as e:
+                raw.error = str(e)
+                errors += 1
+                continue
+            raw.error = None
+            confidence = data.pop("confidence", 0)
+            if not confidence or confidence < 0.3:
+                skipped_low_conf += 1
+                continue
+            dup_dob = data.get("dob") if isinstance(data.get("dob"), date) else None
+            duplicates = find_duplicate_candidates(
+                session,
+                full_name=data.get("full_name"),
+                gender=data.get("gender"),
+                phone=data.get("phone"),
+                whatsapp=data.get("whatsapp"),
+                dob=dup_dob,
+            )
+            top = duplicates[0] if duplicates else None
+            if top and top.score >= AUTO_MERGE_SCORE_THRESHOLD:
+                target = top.profile
+                filled = merge_into_profile(target, data)
+                session.add(Activity(
+                    profile_id=target.id, event="Profile Merged",
+                    detail=f"Auto-merged from message #{raw.id} via {config.LLM_PROVIDER} "
+                           f"({top.score}% match — {'; '.join(top.reasons)}): "
+                           + (f"filled {', '.join(filled)}" if filled else "no new fields"),
+                    created_by_user_id=current_user["id"],
+                ))
+                raw.processed = True
+                merged += 1
+                continue
+            if top:
+                skipped_dup += 1
+                continue
+            profile = Profile(
+                **{k: v for k, v in data.items() if k in Profile.__table__.columns.keys()},
+                stage="AI Extracted",
+                source_message_id=raw.id,
+            )
+            session.add(profile)
+            session.flush()
+            session.add(Activity(profile_id=profile.id, event="Profile Created",
+                                  detail=f"Auto-extracted via {config.LLM_PROVIDER}",
+                                  created_by_user_id=current_user["id"]))
+            raw.processed = True
+            saved += 1
+        session.commit()
+    progress.empty()
+    flash(f"Auto-processed: {saved} profile(s) created" + (f", {merged} merged into existing profiles." if merged else "."))
+    if skipped_low_conf:
+        flash(
+            f"{skipped_low_conf} message(s) skipped — low confidence, left for manual review.",
+            kind="warning",
+        )
+    if skipped_dup:
+        flash(
+            f"{skipped_dup} message(s) skipped — possible duplicate(s) found (below auto-merge confidence), "
+            "left for manual review.",
+            kind="warning",
+        )
+    if errors:
+        flash(f"{errors} message(s) failed extraction (LLM error) and were left unprocessed.", kind="error")
+
+
 current_user = auth.require_login()
-st.title("📥 Import Messages — WhatsApp Chat Export")
+theme.page_header("Import Profiles", "Bring in WhatsApp chat exports and documents — AI turns them into structured profiles.")
 show_flash()
 
 if not auth.can_edit(current_user["role"]):
     st.info("Your account has read-only (Viewer) access. Sign in with an editor role to import messages.")
     st.stop()
 
-tab_import, tab_review, tab_history = st.tabs(["📥 Import", "📋 Review queue", "🗂️ History"])
+with get_session() as _session:
+    _review_count = len(_session.scalars(select(RawMessage).where(RawMessage.processed.is_(False))).all())
+    _history_count = len(_session.scalars(select(RawMessage).where(RawMessage.processed.is_(True))).all())
+
+tab_import, tab_review, tab_history = st.tabs(
+    ["📥 Import", f"📋 Review queue ({_review_count})", f"🗂️ History ({_history_count})"]
+)
 
 with tab_import:
     st.markdown(
         """
 1. In WhatsApp, open the group/chat → ⋮ menu → **More** → **Export chat** → **Without Media** (or with media if you want photos too).
-2. Upload the resulting `.txt` or `.zip` file below.
+2. Upload the resulting `.txt` or `.zip` file below — or any other document (a biodata list, forwarded PDF, plain text).
 """
     )
 
@@ -51,33 +149,70 @@ with tab_import:
             else:
                 st.warning("Enter some text first.")
 
-    uploaded = st.file_uploader("WhatsApp export (.txt or .zip)", type=["txt", "zip"])
+    uploaded = st.file_uploader(
+        "Upload a file — WhatsApp export (.txt/.zip) or any other document (.txt/.pdf)",
+        type=["txt", "zip", "pdf"],
+    )
 
     if uploaded is not None:
         data = uploaded.read()
-        try:
-            messages, media = parse_export(data, uploaded.name)
-        except Exception as e:  # noqa: BLE001 — surface parser errors to the user
-            st.error(f"Could not parse file: {e}")
-            messages, media = [], {}
+        is_pdf = uploaded.name.lower().endswith(".pdf")
+        messages, media = [], {}
+        chunks: list[str] = []
+        parsed_as = None
 
-        if messages:
-            st.success(f"Parsed {len(messages)} messages" + (f", {len(media)} media files" if media else ""))
+        if not is_pdf:
+            # Try the WhatsApp export parser first — it's the primary use case and
+            # a plain .txt document has no export-format lines to falsely match.
+            try:
+                messages, media = parse_export(data, uploaded.name)
+            except Exception as e:  # noqa: BLE001 — surface parser errors to the user
+                st.error(f"Could not parse file: {e}")
+                messages, media = [], {}
+            if messages:
+                parsed_as = "whatsapp_export"
+
+        if parsed_as is None and not uploaded.name.lower().endswith(".zip"):
+            # .pdf, or a .txt that didn't look like a WhatsApp export — fall back
+            # to the generic document splitter. parse_document only understands
+            # .txt/.pdf, so a non-export .zip has no fallback (same as before).
+            try:
+                chunks = parse_document(data, uploaded.name)
+            except Exception as e:  # noqa: BLE001 — surface parser errors to the user
+                st.error(f"Could not read file: {e}")
+                chunks = []
+            if chunks:
+                parsed_as = "document"
+
+        if parsed_as is None:
+            st.warning(
+                "No messages or text could be extracted from this file. "
+                "If this is a plain list of profiles, paste each one individually using "
+                "'Or paste / manually enter a single message' above."
+            )
+
+        elif parsed_as == "whatsapp_export":
+            st.success(f"Parsed as a WhatsApp export — {len(messages)} messages"
+                       + (f", {len(media)} media files" if media else ""))
             likely = sum(1 for m in messages if is_likely_profile(m.content))
             st.caption(f"{likely} message(s) look like matrimonial profiles based on keyword pre-filter.")
+            auto_process = st.checkbox(
+                "Extract profiles immediately after import", key="auto_process_wa",
+                help="Runs the same extraction as 'Auto-process' in Review queue, right after import.",
+            )
 
             if st.button(f"Import {len(messages)} messages into database", type="primary"):
                 with get_session() as session:
                     existing_pairs = {
                         tuple(row) for row in session.execute(select(RawMessage.sender, RawMessage.content)).all()
                     }
-                    new_count = skipped_count = 0
+                    new_ids, new_count, skipped_count = [], 0, 0
                     for m in messages:
                         pair = (m.sender, m.content)
                         if pair in existing_pairs:
                             skipped_count += 1
                             continue
-                        session.add(RawMessage(
+                        raw = RawMessage(
                             source="whatsapp_export",
                             chat_name=uploaded.name,
                             sender=m.sender,
@@ -85,7 +220,10 @@ with tab_import:
                             content=m.content,
                             media_filename=m.media_filename,
                             is_system=m.is_system,
-                        ))
+                        )
+                        session.add(raw)
+                        session.flush()
+                        new_ids.append(raw.id)
                         existing_pairs.add(pair)
                         new_count += 1
                     session.commit()
@@ -93,10 +231,54 @@ with tab_import:
                     f"Imported {new_count} message(s)."
                     + (f" Skipped {skipped_count} already in database." if skipped_count else "")
                 )
+                if auto_process and new_ids:
+                    with get_session() as session:
+                        likely_ids = [
+                            mid for mid in new_ids
+                            if is_likely_profile(session.get(RawMessage, mid).content)
+                        ]
+                    _auto_process_raw_messages(likely_ids, current_user)
+                st.rerun()
+
+        elif parsed_as == "document":
+            likely = sum(1 for c in chunks if is_likely_profile(c))
+            st.success(f"Parsed as a document — split into {len(chunks)} block(s) of text, "
+                       f"{likely} look like matrimonial profiles.")
+            auto_process_doc = st.checkbox(
+                "Extract profiles immediately after import", key="auto_process_doc",
+                help="Runs the same extraction as 'Auto-process' in Review queue, right after import.",
+            )
+
+            if st.button(f"Import {len(chunks)} block(s) into database", type="primary", key="import_doc_blocks"):
+                with get_session() as session:
+                    existing = {row[0] for row in session.execute(select(RawMessage.content)).all()}
+                    new_ids, new_count, skipped_count = [], 0, 0
+                    for chunk in chunks:
+                        if chunk in existing:
+                            skipped_count += 1
+                            continue
+                        raw = RawMessage(source="document", chat_name=uploaded.name, content=chunk)
+                        session.add(raw)
+                        session.flush()
+                        new_ids.append(raw.id)
+                        existing.add(chunk)
+                        new_count += 1
+                    session.commit()
+                flash(
+                    f"Imported {new_count} block(s)."
+                    + (f" Skipped {skipped_count} already in database." if skipped_count else "")
+                )
+                if auto_process_doc and new_ids:
+                    with get_session() as session:
+                        likely_ids = [
+                            mid for mid in new_ids
+                            if is_likely_profile(session.get(RawMessage, mid).content)
+                        ]
+                    _auto_process_raw_messages(likely_ids, current_user)
                 st.rerun()
 
 with tab_review:
-    st.subheader("Unprocessed Messages")
+    theme.section("Unprocessed Messages")
 
     with get_session() as session:
         unprocessed = session.scalars(
@@ -113,8 +295,14 @@ with tab_review:
     if not unprocessed:
         st.info("Nothing to process. Import messages in the Import tab.")
     else:
-        only_likely = st.checkbox("Only show messages that look like profiles", value=True)
-        filtered = [m for m in unprocessed if not only_likely or is_likely_profile(m.content)]
+        failed_count = sum(1 for m in unprocessed if m.error)
+        col1, col2 = st.columns(2)
+        only_likely = col1.checkbox("Only show messages that look like profiles", value=True)
+        only_failed = col2.checkbox(f"Only show failed extractions ({failed_count})", value=False)
+        filtered = [
+            m for m in unprocessed
+            if (not only_likely or is_likely_profile(m.content)) and (not only_failed or m.error)
+        ]
         shown = filtered[:30]
 
         if len(shown) != len(unprocessed):
@@ -128,62 +316,7 @@ with tab_review:
             )
 
         if shown and st.button(f"⚡ Auto-process all {len(shown)} shown message(s)", key="bulk_autoprocess"):
-            saved = skipped_low_conf = skipped_dup = errors = 0
-            progress = st.progress(0.0, text="Starting…")
-            with get_session() as session:
-                for i, msg in enumerate(shown, start=1):
-                    progress.progress(i / len(shown), text=f"Processing {i} of {len(shown)} — extracting…")
-                    raw = session.get(RawMessage, msg.id)
-                    if raw is None or raw.processed:
-                        continue
-                    try:
-                        data = extract_profile(raw.content)
-                    except LLMError:
-                        errors += 1
-                        continue
-                    confidence = data.pop("confidence", 0)
-                    if not confidence or confidence < 0.3:
-                        skipped_low_conf += 1
-                        continue
-                    dup_dob = data.get("dob") if isinstance(data.get("dob"), date) else None
-                    duplicates = find_duplicate_candidates(
-                        session,
-                        full_name=data.get("full_name"),
-                        gender=data.get("gender"),
-                        phone=data.get("phone"),
-                        whatsapp=data.get("whatsapp"),
-                        dob=dup_dob,
-                    )
-                    if duplicates:
-                        skipped_dup += 1
-                        continue
-                    profile = Profile(
-                        **{k: v for k, v in data.items() if k in Profile.__table__.columns.keys()},
-                        stage="AI Extracted",
-                        source_message_id=raw.id,
-                    )
-                    session.add(profile)
-                    session.flush()
-                    session.add(Activity(profile_id=profile.id, event="Profile Created",
-                                          detail=f"Auto-extracted via {config.LLM_PROVIDER}",
-                                          created_by_user_id=current_user["id"]))
-                    raw.processed = True
-                    saved += 1
-                session.commit()
-            progress.empty()
-            flash(f"Auto-processed: {saved} profile(s) created.")
-            if skipped_low_conf:
-                flash(
-                    f"{skipped_low_conf} message(s) skipped — low confidence, left for manual review.",
-                    kind="warning",
-                )
-            if skipped_dup:
-                flash(
-                    f"{skipped_dup} message(s) skipped — possible duplicate(s) found, left for manual review.",
-                    kind="warning",
-                )
-            if errors:
-                flash(f"{errors} message(s) failed extraction (LLM error) and were left unprocessed.", kind="error")
+            _auto_process_raw_messages([m.id for m in shown], current_user)
             st.rerun()
 
         content_counts = Counter(m.content for m in shown)
@@ -213,8 +346,13 @@ with tab_review:
         for msg in shown:
             pending_key = f"pending_extract_{msg.id}"
             confirm_delete_key = f"confirm_delete_{msg.id}"
-            with st.expander(f"{msg.sender or 'Unknown'} — {msg.content[:80]}"):
+            title = f"{msg.sender or 'Unknown'} — {msg.content[:80]}"
+            if msg.error:
+                title = f"⚠️ {title}"
+            with st.expander(title):
                 st.text(msg.content)
+                if msg.error:
+                    st.error(f"Last extraction failed: {msg.error}")
 
                 if confirm_delete_key in st.session_state:
                     st.warning("Delete this message permanently? This cannot be undone.")
@@ -233,12 +371,22 @@ with tab_review:
                             st.rerun()
                 elif pending_key not in st.session_state:
                     with st.container(horizontal=True):
-                        if st.button("Extract profile", key=f"extract_{msg.id}"):
+                        if st.button(
+                            "🔁 Retry extraction" if msg.error else "Extract profile", key=f"extract_{msg.id}",
+                        ):
                             try:
                                 data = extract_profile(msg.content)
                             except LLMError as e:
+                                with get_session() as session:
+                                    raw = session.get(RawMessage, msg.id)
+                                    raw.error = str(e)
+                                    session.commit()
                                 st.error(str(e))
                             else:
+                                with get_session() as session:
+                                    raw = session.get(RawMessage, msg.id)
+                                    raw.error = None
+                                    session.commit()
                                 confidence = data.pop("confidence", 0)
                                 if confidence and confidence >= 0.3:
                                     st.session_state[pending_key] = data

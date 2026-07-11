@@ -14,6 +14,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from .models import Activity, Document, MatchResult, Profile, Task
+from .profiles import age_from_dob
 
 NAME_MATCH_THRESHOLD = 0.82  # difflib ratio, 0-1
 MIN_REPORT_SCORE = 40  # don't surface weak/coincidental matches
@@ -144,6 +145,15 @@ def merge_into_profile(target: Profile, data: dict) -> list[str]:
         elif getattr(target, key, None) in (None, ""):
             setattr(target, key, value)
             filled.append(key)
+    # age is derived, not independently authoritative — if this merge brought
+    # in a dob (new or already on target), recompute age from it so a stale
+    # age recorded before the dob was known doesn't survive the merge.
+    if target.dob:
+        correct_age = age_from_dob(target.dob)
+        if target.age != correct_age:
+            target.age = correct_age
+            if "age" not in filled:
+                filled.append("age (recalculated from dob)")
     return filled
 
 

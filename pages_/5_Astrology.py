@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 from sqlalchemy import select
 
-from soulmatch import auth
+from soulmatch import auth, theme
 from soulmatch.astrology.engine import AstrologyError, BirthDetails, build_chart, chart_summary
 from soulmatch.astrology.ephemeris import RASHIS
 from soulmatch.astrology.geo import lookup as geo_lookup
@@ -13,9 +13,8 @@ from soulmatch.models import Activity, Profile
 from soulmatch.ui import flash, show_flash
 
 current_user = auth.require_login()
-st.title("🔯 Astrology Explorer")
+theme.page_header("Horoscope Check", "Standalone chart lookup (Lahiri sidereal) — verify a horoscope without running a full match.")
 show_flash()
-st.caption("Standalone chart lookup (Lahiri sidereal) — useful for verifying a horoscope without a full match.")
 
 with get_session() as session:
     profiles = session.scalars(select(Profile).order_by(Profile.full_name)).all()
@@ -84,7 +83,7 @@ if chart_state and chart_state["dob"] == dob and chart_state["birth_time"] == bi
     c3.metric("Rashi (Moon Sign)", summary["rashi"], summary["rashi_te"], delta_color="off")
     c4.metric("Lagna (Ascendant)", summary["lagna"], summary["lagna_te"], delta_color="off")
 
-    st.subheader("Planetary Positions (Sidereal)")
+    theme.section("Planetary Positions (Sidereal)")
     rows = []
     for planet, lon in chart_state["planet_longitudes"].items():
         sign = int(lon // 30)

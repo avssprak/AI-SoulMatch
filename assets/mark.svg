@@ -1,0 +1,31 @@
+<svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+  <!-- AI-SoulMatch brand mark: "Bandhan Spark".
+       Two interlocking arcs — deep maroon and gold, two families joining —
+       form a heart left open at the crown, where a saffron AI spark sits
+       connected to faint neural nodes. -->
+  <defs>
+    <linearGradient id="smMaroon" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8A2A47"/>
+      <stop offset="1" stop-color="#571230"/>
+    </linearGradient>
+    <linearGradient id="smGold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#E8C55B"/>
+      <stop offset="1" stop-color="#B8860B"/>
+    </linearGradient>
+    <linearGradient id="smSpark" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F6B35C"/>
+      <stop offset="1" stop-color="#E88F2A"/>
+    </linearGradient>
+  </defs>
+
+  <path d="M32 10 L19 7 M32 10 L45 6" stroke="#C9A227" stroke-width="1.1" opacity="0.5" stroke-linecap="round" fill="none"/>
+  <circle cx="19" cy="7" r="1.9" fill="#C9A227" opacity="0.85"/>
+  <circle cx="45" cy="6" r="1.5" fill="#C9A227" opacity="0.7"/>
+
+  <path d="M32 55 C13 42 6.5 25 15.5 15.8 C21.5 9.6 29.5 12.4 31 20.5"
+        fill="none" stroke="url(#smMaroon)" stroke-width="5.6" stroke-linecap="round"/>
+  <path d="M32 55 C51 42 57.5 25 48.5 15.8 C42.5 9.6 34.5 12.4 33 20.5"
+        fill="none" stroke="url(#smGold)" stroke-width="5.6" stroke-linecap="round"/>
+
+  <path d="M32 4.5 L36.5 10 L32 15.5 L27.5 10 Z" fill="url(#smSpark)"/>
+</svg>

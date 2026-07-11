@@ -2,17 +2,19 @@ import pandas as pd
 import streamlit as st
 from sqlalchemy import select
 
-from soulmatch import auth
+from soulmatch import auth, theme
 from soulmatch.db import get_session
 from soulmatch.models import ROLES, User
 from soulmatch.ui import flash, show_flash
 
 current_user = auth.require_admin()
 
-st.title("👤 Users")
+theme.page_header(
+    "User Management",
+    "Administrator only. Roles: Administrator (full access + user management), "
+    "Volunteer / Coordinator (create/edit everything), Viewer (read-only).",
+)
 show_flash()
-st.caption("Administrator only. Roles: Administrator (full access + user management), "
-           "Volunteer / Coordinator (create/edit everything), Viewer (read-only).")
 
 with get_session() as session:
     users = session.scalars(select(User).order_by(User.username)).all()
@@ -25,7 +27,7 @@ rows = [{
 st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
 st.divider()
-st.subheader("Create User")
+theme.section("Create User")
 with st.form("create_user", clear_on_submit=True):
     c1, c2 = st.columns(2)
     new_username = c1.text_input("Username*")
@@ -53,7 +55,7 @@ with st.form("create_user", clear_on_submit=True):
                     st.rerun()
 
 st.divider()
-st.subheader("Manage User")
+theme.section("Manage User")
 if users:
     selected_id = st.selectbox(
         "Select user", [u.id for u in users],

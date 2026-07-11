@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import streamlit as st
 
+from .models import stage_group_label
+
 _KEY = "_flash"
 _RENDERERS = {
     "success": st.success,
@@ -29,3 +31,22 @@ def show_flash() -> None:
     messages = st.session_state.pop(_KEY, [])
     for kind, message in messages:
         _RENDERERS.get(kind, st.info)(message)
+
+
+# One color per stage *group* (see models.PIPELINE_STAGE_GROUPS), not one per
+# individual stage — 15 distinct colors would be noise, not signal.
+_GROUP_COLORS = {
+    "Screening": "blue",
+    "Outreach": "violet",
+    "Outcome": "green",
+}
+_OUTCOME_COLORS = {"Marriage": "green", "Rejected": "red", "Closed": "gray", "Engagement": "green"}
+
+
+def stage_badge(stage: str) -> str:
+    """Markdown color-badge text for a pipeline stage, grouped by
+    PIPELINE_STAGE_GROUPS. Render with st.markdown(stage_badge(stage))."""
+    label = stage_group_label(stage)
+    group = label.split(" — ")[0] if " — " in label else None
+    color = _OUTCOME_COLORS.get(stage) or _GROUP_COLORS.get(group, "gray")
+    return f":{color}-badge[{stage}]"

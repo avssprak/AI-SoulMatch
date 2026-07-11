@@ -2,10 +2,16 @@
 
 import streamlit as st
 
-from soulmatch import auth
+from soulmatch import auth, landing, theme
 from soulmatch.db import get_session, init_db
 
-st.set_page_config(page_title="AI-SoulMatch", page_icon="💞", layout="wide")
+# White lockup: the authenticated sidebar is deep maroon (see theme.py), and
+# the landing page hides the logo entirely, so the white version is safe app-wide.
+LOGO_PATH = "assets/logo-white.svg"
+MARK_PATH = "assets/mark.svg"
+
+st.set_page_config(page_title="AI-SoulMatch", page_icon=MARK_PATH, layout="wide")
+st.logo(LOGO_PATH, size="large")
 
 init_db()
 with get_session() as _session:
@@ -27,32 +33,66 @@ if auth.current_user() is None:
                 del st.query_params["token"]
 
 if auth.current_user() is None:
-    st.title("💞 AI-SoulMatch")
-    st.caption("Sign in to continue.")
-    with st.form("login"):
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        submitted = st.form_submit_button("Sign in", type="primary")
-    if submitted:
-        with get_session() as session:
-            user = auth.authenticate(session, username, password)
-            if user:
-                st.session_state["user"] = {
-                    "id": user.id, "username": user.username,
-                    "full_name": user.full_name, "role": user.role,
-                }
-                st.query_params["token"] = auth.mint_session_token(user)
-        if auth.current_user():
-            st.rerun()
-        else:
-            st.error("Invalid username or password.")
+    # Pre-login landing page (soulmatch/landing.py). The login card is a real
+    # st.container(key=...) — Streamlit tags it with a stable CSS class
+    # (st-key-login_card) that the landing CSS styles into a floating card.
+    landing.inject_css()
+    st.markdown('<div id="ai-soulmatch-top"></div>', unsafe_allow_html=True)
+
+    hero_left, hero_right = st.columns([1.35, 1], gap="large")
+    with hero_left:
+        landing.render_hero_left()
+    with hero_right:
+        with st.container(key="login_card"):
+            st.markdown(
+                '<img src="/app/static/mark.svg" style="height:40px; margin-bottom:6px;"/>',
+                unsafe_allow_html=True,
+            )
+            st.markdown("### Welcome back")
+            st.caption("Sign in to continue to your workspace.")
+            with st.form("login"):
+                username = st.text_input("Username")
+                password = st.text_input("Password", type="password")
+                submitted = st.form_submit_button("Sign in", type="primary", use_container_width=True)
+            if submitted:
+                with get_session() as session:
+                    user = auth.authenticate(session, username, password)
+                    if user:
+                        st.session_state["user"] = {
+                            "id": user.id, "username": user.username,
+                            "full_name": user.full_name, "role": user.role,
+                        }
+                        st.query_params["token"] = auth.mint_session_token(user)
+                if auth.current_user():
+                    st.rerun()
+                else:
+                    st.error("Invalid username or password.")
+
+    landing.render_sections()
     st.stop()
 
 current = auth.current_user()
 
+theme.apply()  # brand CSS for every authenticated page (pages run below via nav.run())
+
 with st.sidebar:
-    st.markdown(f"**{current['full_name'] or current['username']}**")
-    st.caption(current["role"])
+    display_name = current["full_name"] or current["username"]
+    initials = "".join(w[0] for w in display_name.split()[:2]).upper() or "?"
+    st.markdown(
+        f"""
+        <div style="display:flex; align-items:center; gap:12px; padding:10px 4px 4px 4px;">
+          <div style="width:40px; height:40px; border-radius:50%; flex:0 0 auto;
+                      background:linear-gradient(135deg,#E8C55B,#C9A227); color:#4A1226;
+                      font:700 0.95rem/40px Inter,sans-serif; text-align:center;">{initials}</div>
+          <div>
+            <div style="font:700 0.95rem/1.3 Inter,sans-serif; color:#FFF3E4;">{display_name}</div>
+            <div style="font:500 0.75rem/1.3 Inter,sans-serif; color:rgba(255,243,228,0.65);
+                        text-transform:uppercase; letter-spacing:0.06em;">{current["role"]}</div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     if st.button("Log out"):
         with get_session() as session:
             user = session.get(auth.User, current["id"])
@@ -79,17 +119,17 @@ with st.sidebar:
                         st.query_params["token"] = auth.mint_session_token(user)
                         st.success("Password updated.")
 
-dashboard = st.Page("pages_/1_Dashboard.py", title="Dashboard", icon="📊", default=True)
-ingest = st.Page("pages_/2_Ingest.py", title="Import Messages", icon="📥")
-profiles = st.Page("pages_/3_Profiles.py", title="Profiles", icon="🗂️")
-matching = st.Page("pages_/4_Matching.py", title="Matching", icon="💘")
-astro = st.Page("pages_/5_Astrology.py", title="Astrology", icon="🔯")
-tasks = st.Page("pages_/6_Tasks.py", title="Tasks", icon="✅")
-search = st.Page("pages_/8_Search.py", title="Search & Insights", icon="🔍")
+dashboard = st.Page("pages_/1_Dashboard.py", title="Dashboard", icon=":material/space_dashboard:", default=True)
+ingest = st.Page("pages_/2_Ingest.py", title="Import Profiles", icon=":material/upload_file:")
+profiles = st.Page("pages_/3_Profiles.py", title="Profiles", icon=":material/contacts:")
+matching = st.Page("pages_/4_Matching.py", title="Matchmaking", icon=":material/favorite:")
+astro = st.Page("pages_/5_Astrology.py", title="Horoscope Check", icon=":material/nights_stay:")
+tasks = st.Page("pages_/6_Tasks.py", title="Tasks", icon=":material/task_alt:")
+search = st.Page("pages_/8_Search.py", title="Search & Insights", icon=":material/manage_search:")
 
 pages = [dashboard, ingest, profiles, matching, astro, tasks, search]
 if auth.is_admin(current["role"]):
-    pages.append(st.Page("pages_/7_Users.py", title="Users", icon="👤"))
+    pages.append(st.Page("pages_/7_Users.py", title="Users", icon=":material/group:"))
 
 nav = st.navigation(pages)
 nav.run()

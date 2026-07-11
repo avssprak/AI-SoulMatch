@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from soulmatch import config, documents
 from soulmatch.models import Activity, Base, MatchResult, Profile, Task
-from soulmatch.profiles import delete_profile
+from soulmatch.profiles import delete_profile, is_match_ready, profile_completeness
 
 
 @pytest.fixture()
@@ -58,3 +58,43 @@ def test_delete_profile_with_no_children_is_a_clean_noop_elsewhere():
 
         assert summary == {"id": profile_id, "documents": 0, "tasks": 0, "activities": 0, "matches": 0}
         assert session.get(Profile, profile_id) is None
+
+
+def test_profile_completeness_empty_profile_is_zero_percent():
+    profile = Profile()
+    percent, missing = profile_completeness(profile)
+    assert percent == 0
+    assert "full_name" in missing and "dob" in missing
+
+
+def test_profile_completeness_fully_filled_is_100_percent():
+    profile = Profile(
+        full_name="Priya Sharma", gender="Bride", dob=None, birth_time="10:30", birth_place="Bangalore",
+        phone="9876543210", religion="Hindu", caste="Brahmin", gothram="Bharadwaja",
+        qualification="B.Tech", occupation="Engineer", current_location="Bangalore",
+        height_cm=160.0, food_preference="Vegetarian",
+    )
+    from datetime import date
+    profile.dob = date(1998, 6, 15)
+    percent, missing = profile_completeness(profile)
+    assert percent == 100
+    assert missing == []
+
+
+def test_profile_completeness_partial():
+    profile = Profile(full_name="Priya Sharma", gender="Bride")
+    percent, missing = profile_completeness(profile)
+    assert 0 < percent < 100
+    assert "full_name" not in missing
+    assert "dob" in missing
+
+
+def test_is_match_ready_requires_all_three_birth_fields():
+    from datetime import date
+    profile = Profile(dob=date(1998, 6, 15), birth_time="10:30", birth_place="Bangalore")
+    assert is_match_ready(profile) is True
+
+    profile.birth_place = None
+    assert is_match_ready(profile) is False
+
+    assert is_match_ready(Profile()) is False

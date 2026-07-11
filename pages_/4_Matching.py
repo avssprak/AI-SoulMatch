@@ -9,9 +9,11 @@ from soulmatch.astrology.engine import AstrologyError, BirthDetails, build_chart
 from soulmatch.db import get_session
 from soulmatch.extraction.llm import LLMError
 from soulmatch.matching.rules import evaluate_match
-from soulmatch.models import Activity, MatchResult, Profile
+from soulmatch.matchview import render_recommendation, render_saved_match_result
+from soulmatch.models import Activity, MatchResult, Profile, User
 from soulmatch.preferences import CandidatePreferences, filter_candidates
 from soulmatch.recommendation import generate_recommendation
+from soulmatch import theme
 from soulmatch.ui import flash, show_flash
 
 def _missing_birth_detail(bride: Profile, groom: Profile) -> str:
@@ -65,7 +67,7 @@ def render_match_detail(bride_id: int, groom_id: int, can_write: bool, state_pre
         astro_result = eval_state["astro_result"]
         koota_total = eval_state["koota_total"]
 
-        st.subheader("Practical Compatibility")
+        theme.section("Practical Compatibility")
         badge = "✅ Recommended" if outcome.recommended else "❌ Not Recommended"
         st.metric("Practical Score", f"{outcome.score}%", badge)
         if not outcome.mandatory_passed:
@@ -78,7 +80,7 @@ def render_match_detail(bride_id: int, groom_id: int, can_write: bool, state_pre
             st.caption(f"Missing data for a full assessment: {', '.join(outcome.missing_fields)}")
 
         if astro_result:
-            st.subheader("Vedic Astrology Compatibility")
+            theme.section("Vedic Astrology Compatibility")
             with st.expander("Birth chart details (English / Telugu)"):
                 bc1, bc2 = st.columns(2)
                 for col, label, chart in ((bc1, "Bride", astro_result["bride_chart"]),
@@ -101,7 +103,7 @@ def render_match_detail(bride_id: int, groom_id: int, can_write: bool, state_pre
         else:
             st.info("Add DOB, birth time and birth place for both profiles to see astrology compatibility.")
 
-        st.subheader("AI Recommendation")
+        theme.section("AI Recommendation")
         if st.button("Generate AI Recommendation", key=f"{state_prefix}_generate_rec_btn"):
             with get_session() as session:
                 bride = session.get(Profile, bride_id)
@@ -120,35 +122,7 @@ def render_match_detail(bride_id: int, groom_id: int, can_write: bool, state_pre
 
         recommendation = st.session_state.get(rec_key)
         if recommendation:
-            final = recommendation.get("final_recommendation") or "Unknown"
-            if final == "Recommended":
-                st.success(f"**{final}** — {recommendation.get('summary', '')}")
-            elif final == "Not Recommended":
-                st.error(f"**{final}** — {recommendation.get('summary', '')}")
-            else:
-                st.warning(f"**{final}** — {recommendation.get('summary', '')}")
-
-            rc1, rc2 = st.columns(2)
-            with rc1:
-                st.markdown("**Strengths**")
-                for s in recommendation.get("strengths") or []:
-                    st.markdown(f"- {s}")
-                st.markdown("**Questions for Families**")
-                for q in recommendation.get("questions_for_families") or []:
-                    st.markdown(f"- {q}")
-            with rc2:
-                st.markdown("**Concerns**")
-                for c in recommendation.get("concerns") or []:
-                    st.markdown(f"- {c}")
-                if recommendation.get("risk_indicators"):
-                    st.markdown("**Risk Indicators**")
-                    for r in recommendation["risk_indicators"]:
-                        st.markdown(f"- ⚠️ {r}")
-
-            st.markdown(f"**Family compatibility:** {recommendation.get('family_compatibility', '')}")
-            st.markdown(f"**Lifestyle compatibility:** {recommendation.get('lifestyle_compatibility', '')}")
-            st.markdown(f"**Career compatibility:** {recommendation.get('career_compatibility', '')}")
-            st.caption(f"Generated via {recommendation.get('_provider', 'unknown')} AI service")
+            render_recommendation(recommendation)
 
         if can_write and st.button("Save this match result", type="primary", key=f"{state_prefix}_save_btn"):
             with get_session() as session2:
@@ -176,7 +150,7 @@ def render_match_detail(bride_id: int, groom_id: int, can_write: bool, state_pre
 current_user = auth.require_login()
 can_write = auth.can_edit(current_user["role"])
 
-st.title("💘 Matching Engine")
+theme.page_header("Matchmaking", "Score bride–groom pairs on practical criteria, Vedic compatibility, and AI judgment.")
 show_flash()
 if not can_write:
     st.caption("Your account has read-only (Viewer) access — you can evaluate matches but not save results.")
@@ -184,12 +158,15 @@ if not can_write:
 with get_session() as session:
     brides = session.scalars(select(Profile).where(Profile.gender == "Bride")).all()
     grooms = session.scalars(select(Profile).where(Profile.gender == "Groom")).all()
+    _saved_match_count = len(session.scalars(select(MatchResult)).all())
 
 if not brides or not grooms:
-    st.info("Need at least one Bride and one Groom profile. Add some via **Import Messages** or **Profiles**.")
+    st.info("Need at least one Bride and one Groom profile. Add some via **Import Profiles** or **Profiles**.")
     st.stop()
 
-tab_single, tab_seeking, tab_all = st.tabs(["Single Match", "Find Matches For One Profile", "Run All Combinations"])
+tab_single, tab_seeking, tab_all, tab_saved = st.tabs(
+    ["Check a Specific Pair", "Find Matches for Someone", "Screen All Pairs", f"Saved Matches ({_saved_match_count})"]
+)
 
 with tab_single:
     col1, col2 = st.columns(2)
@@ -318,24 +295,77 @@ with tab_seeking:
         df_display["Koota Score"] = df_display["Koota Score"].map(lambda v: f"{v:.1f}" if pd.notna(v) else "—")
         seeking_event = st.dataframe(
             df_display, width='stretch', hide_index=True,
-            on_select="rerun", selection_mode="single-row", key="seeking_results_table",
+            on_select="rerun", selection_mode="multi-row", key="seeking_results_table",
         )
-        st.caption("Click a row to see the full match detail — koota breakdown, AI recommendation, save — below.")
+        st.caption(
+            "Click a row to see the full match detail — koota breakdown, AI recommendation, save — below. "
+            "Ctrl/shift-click 2–3 rows to compare them side by side instead."
+        )
 
         selected_rows = seeking_event.selection.rows if seeking_event and seeking_event.selection else []
-        if selected_rows:
+        if len(selected_rows) == 1:
             candidate_id = int(df.iloc[selected_rows[0]]["Candidate ID"])
             if seeking_gender == "Bride":
                 detail_bride_id, detail_groom_id = anchor_id, candidate_id
             else:
                 detail_bride_id, detail_groom_id = candidate_id, anchor_id
             st.divider()
-            st.subheader(f"Match detail: Bride #{detail_bride_id} × Groom #{detail_groom_id}")
+            theme.section(f"Match detail: Bride #{detail_bride_id} × Groom #{detail_groom_id}")
             render_match_detail(detail_bride_id, detail_groom_id, can_write, "seeking")
+        elif 2 <= len(selected_rows) <= 3:
+            candidate_ids = [int(df.iloc[i]["Candidate ID"]) for i in selected_rows]
+            with get_session() as session:
+                cand_profiles = {
+                    p.id: p for p in session.scalars(select(Profile).where(Profile.id.in_(candidate_ids))).all()
+                }
+            col_labels = {cid: f"#{cid} {cand_profiles[cid].full_name or 'Unnamed'}" for cid in candidate_ids
+                          if cid in cand_profiles}
+            compare_fields = [
+                ("Age", "age"), ("Height (cm)", "height_cm"), ("Location", "current_location"),
+                ("Religion", "religion"), ("Caste", "caste"), ("Qualification", "qualification"),
+                ("Occupation", "occupation"), ("Food Preference", "food_preference"),
+            ]
+            # Every cell is coerced to str — mixed numeric/"—" columns otherwise fail
+            # pyarrow's dataframe serialization (st.dataframe requires uniform column types).
+            compare_rows = []
+            for label, attr in compare_fields:
+                row = {"Field": label}
+                for cid, col_label in col_labels.items():
+                    value = getattr(cand_profiles.get(cid), attr, None)
+                    row[col_label] = str(value) if value not in (None, "") else "—"
+                compare_rows.append(row)
+            for score_label, score_col in (("Practical Score", "Practical Score"), ("Koota Score", "Koota Score")):
+                row = {"Field": score_label}
+                for cid, col_label in col_labels.items():
+                    match_row = df[df["Candidate ID"] == cid]
+                    value = match_row.iloc[0][score_col] if not match_row.empty else None
+                    row[col_label] = str(value) if pd.notna(value) else "—"
+                compare_rows.append(row)
+            st.divider()
+            theme.section("Compare candidates")
+            st.dataframe(pd.DataFrame(compare_rows), width="stretch", hide_index=True)
+        elif len(selected_rows) > 3:
+            st.info("Select up to 3 candidates to compare side by side (currently more than 3 selected).")
 
 with tab_all:
-    st.caption(f"{len(brides)} bride(s) × {len(grooms)} groom(s) = {len(brides) * len(grooms)} combinations")
-    if st.button("Run practical screening on all combinations"):
+    combo_count = len(brides) * len(grooms)
+    st.caption(f"{len(brides)} bride(s) × {len(grooms)} groom(s) = {combo_count} combinations")
+    ALL_PAIRS_WARN_THRESHOLD = 500
+    run_all = st.button("Run practical screening on all combinations")
+    if run_all and combo_count > ALL_PAIRS_WARN_THRESHOLD:
+        st.session_state["_confirm_screen_all"] = True
+        run_all = False
+    if st.session_state.get("_confirm_screen_all"):
+        st.warning(
+            f"{combo_count} combinations is a lot to screen at once and may take a while — proceed anyway?"
+        )
+        with st.container(horizontal=True):
+            if st.button("Yes, screen all", key="confirm_screen_all_btn", type="primary"):
+                st.session_state.pop("_confirm_screen_all")
+                run_all = True
+            if st.button("Cancel", key="cancel_screen_all_btn"):
+                st.session_state.pop("_confirm_screen_all")
+    if run_all:
         rows = []
         with get_session() as session:
             for bride in brides:
@@ -350,3 +380,76 @@ with tab_all:
                     })
         df = pd.DataFrame(rows).sort_values("Score", ascending=False)
         st.dataframe(df, width='stretch', hide_index=True)
+
+with tab_saved:
+    with get_session() as session:
+        saved_matches = session.scalars(select(MatchResult).order_by(MatchResult.created_at.desc())).all()
+        involved_ids = {m.bride_id for m in saved_matches} | {m.groom_id for m in saved_matches}
+        profiles_by_id = {
+            p.id: p for p in session.scalars(select(Profile).where(Profile.id.in_(involved_ids))).all()
+        } if involved_ids else {}
+        actor_ids = {m.created_by_user_id for m in saved_matches if m.created_by_user_id}
+        actor_names = {
+            u.id: (u.full_name or u.username)
+            for u in session.scalars(select(User).where(User.id.in_(actor_ids))).all()
+        } if actor_ids else {}
+
+    if not saved_matches:
+        st.info(
+            "No saved match results yet — evaluate a pair in the tabs above and click "
+            "\"Save this match result\" to keep it here for later."
+        )
+    else:
+        def _profile_label(pid: int) -> str:
+            p = profiles_by_id.get(pid)
+            return f"#{pid} {p.full_name or 'Unnamed'}" if p else f"#{pid} (deleted)"
+
+        rows = [{
+            "id": m.id,
+            "Bride": _profile_label(m.bride_id),
+            "Groom": _profile_label(m.groom_id),
+            "Practical %": m.practical_score,
+            "Koota": f"{m.koota_total:.1f}" if m.koota_total is not None else "—",
+            "Recommendation": m.recommendation or "—",
+            "Saved": m.created_at.strftime("%d %b %Y"),
+            "By": actor_names.get(m.created_by_user_id, "—"),
+        } for m in saved_matches]
+        st.caption(f"{len(rows)} saved match result(s)")
+        saved_df = pd.DataFrame(rows)
+        saved_event = st.dataframe(
+            saved_df.drop(columns=["id"]), width="stretch", hide_index=True,
+            on_select="rerun", selection_mode="single-row", key="saved_matches_table",
+        )
+        st.caption("Click a row to see the full saved detail — practical breakdown, koota, AI recommendation.")
+
+        selected_saved_rows = saved_event.selection.rows if saved_event and saved_event.selection else []
+        if selected_saved_rows:
+            mr_id = int(saved_df.iloc[selected_saved_rows[0]]["id"])
+            with get_session() as session:
+                mr = session.get(MatchResult, mr_id)
+                bride = session.get(Profile, mr.bride_id) if mr else None
+                groom = session.get(Profile, mr.groom_id) if mr else None
+            if mr:
+                st.divider()
+                render_saved_match_result(mr, bride, groom)
+
+                if can_write:
+                    confirm_key = f"confirm_delete_match_{mr.id}"
+                    if confirm_key in st.session_state:
+                        st.error("Really delete this saved match result? This cannot be undone.")
+                        with st.container(horizontal=True):
+                            if st.button("Yes, delete", key=f"confirm_delete_match_btn_{mr.id}", type="primary"):
+                                with get_session() as del_session:
+                                    target = del_session.get(MatchResult, mr.id)
+                                    if target:
+                                        del_session.delete(target)
+                                        del_session.commit()
+                                del st.session_state[confirm_key]
+                                flash("Deleted saved match result.")
+                                st.rerun()
+                            if st.button("Cancel", key=f"cancel_delete_match_{mr.id}"):
+                                del st.session_state[confirm_key]
+                                st.rerun()
+                    elif st.button("🗑️ Delete this saved match", key=f"delete_match_{mr.id}"):
+                        st.session_state[confirm_key] = True
+                        st.rerun()

@@ -11,6 +11,7 @@ import re
 from datetime import date, datetime
 
 from .. import config
+from ..profiles import age_from_dob
 from . import llm
 
 PROFILE_FIELDS = {
@@ -32,6 +33,7 @@ PROFILE_FIELDS = {
     "sub_caste": "string",
     "gothram": "string",
     "nakshatra": "birth star, e.g. Rohini",
+    "padam": "nakshatra quarter/pada, e.g. '3rd Padam' — not a Profile column, folded into notes",
     "rashi": "moon sign, e.g. Vrishabha/Taurus",
     "lagna": "ascendant if mentioned",
     "horoscope_available": "boolean",
@@ -95,7 +97,7 @@ def is_likely_profile(text: str) -> bool:
 def extract_profile(text: str, provider: str | None = None) -> dict:
     provider = (provider or config.LLM_PROVIDER).lower()
     if provider == "mock":
-        return _mock_extract(text)
+        return _clean(_mock_extract(text))
     schema = json.dumps(PROFILE_FIELDS, indent=2)
     prompt = _PROMPT_TEMPLATE.format(schema=schema, message=text.strip()[:8000])
     result = llm.complete_json(prompt, provider=provider)
@@ -116,6 +118,22 @@ def _clean(data: dict) -> dict:
         except ValueError:
             out["notes"] = f"Unparsed DOB: {out['dob']}. " + (out.get("notes") or "")
             out["dob"] = None
+    # age must always be derived from dob, not trusted from free text (stated
+    # ages in biodata go stale between writing and upload); keep the
+    # originally-stated age in notes if it disagrees, for a sanity check.
+    if out.get("dob"):
+        derived_age = age_from_dob(out["dob"])
+        stated_age = out.get("age")
+        if stated_age is not None and int(stated_age) != derived_age:
+            out["notes"] = (
+                f"Stated age was {stated_age}, recalculated to {derived_age} from DOB. "
+                + (out.get("notes") or "")
+            )
+        out["age"] = derived_age
+    # padam is not a Profile column; fold it into notes so it isn't lost.
+    padam = out.pop("padam", None)
+    if padam:
+        out["notes"] = f"Nakshatra Padam: {padam}. " + (out.get("notes") or "")
     return out
 
 

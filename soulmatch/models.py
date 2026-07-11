@@ -102,6 +102,7 @@ class RawMessage(Base):
     media_filename: Mapped[str | None] = mapped_column(String(500))
     is_system: Mapped[bool] = mapped_column(Boolean, default=False)
     processed: Mapped[bool] = mapped_column(Boolean, default=False)
+    error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     profiles: Mapped[list["Profile"]] = relationship(back_populates="source_message")

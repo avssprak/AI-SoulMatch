@@ -1,14 +1,15 @@
 import pandas as pd
 import streamlit as st
 
-from soulmatch import auth, config
+from soulmatch import auth, config, theme
 from soulmatch.db import get_session
 from soulmatch.extraction.llm import LLMError
 from soulmatch.insights import incomplete_profiles, pending_horoscope, stale_cases, top_astrology_matches
+from soulmatch.nav import open_profile_button
 from soulmatch.search import apply_filters, describe_filters, parse_query
 
 auth.require_login()
-st.title("🔍 Search & Insights")
+theme.page_header("Search & Insights", "Ask questions in plain language and get instant answers across your whole database.")
 
 tab_search, tab_insights = st.tabs(["Natural Language Search", "Quick Insights"])
 
@@ -76,21 +77,37 @@ with tab_search:
                     c1.markdown(f"**Religion:** {picked['Religion'] or '—'}")
                     c2.markdown(f"**Caste:** {picked['Caste'] or '—'}")
                     c3.markdown(f"**Horoscope:** {picked['Horoscope']}")
-                    st.caption("Open **Profiles** and select this ID to edit, view documents, or manage tasks.")
+                    open_profile_button(int(picked["ID"]), label="Open profile to edit, view documents, or manage tasks")
 
 with tab_insights:
     with get_session() as session:
         col1, col2 = st.columns(2)
 
+        def _open_profile_picker(profiles_list, key: str) -> None:
+            """Compact selectbox + Open button under an Insights list — these
+            tables aren't selectable dataframes, so this is the deep-link
+            entry point for them instead."""
+            if not profiles_list:
+                return
+            pc1, pc2 = st.columns([3, 1])
+            pid = pc1.selectbox(
+                "Open a profile", [p.id for p in profiles_list],
+                format_func=lambda i: next(f"#{p.id} {p.full_name or 'Unnamed'}" for p in profiles_list if p.id == i),
+                key=key, label_visibility="collapsed",
+            )
+            with pc2:
+                open_profile_button(pid, label="Open", key=f"{key}_btn")
+
         with col1:
-            st.subheader("Pending Horoscope")
+            theme.section("Pending Horoscope")
             pending = pending_horoscope(session)
             st.caption(f"{len(pending)} profile(s)")
             if pending:
                 st.dataframe(pd.DataFrame([{"ID": p.id, "Name": p.full_name, "Gender": p.gender}
                                             for p in pending]), width="stretch", hide_index=True)
+                _open_profile_picker(pending, "open_pending_horoscope")
 
-            st.subheader("Incomplete Profiles")
+            theme.section("Incomplete Profiles")
             incomplete = incomplete_profiles(session)
             st.caption(f"{len(incomplete)} profile(s) missing key fields")
             if incomplete:
@@ -98,9 +115,10 @@ with tab_insights:
                     "ID": r.profile.id, "Name": r.profile.full_name,
                     "Missing": ", ".join(r.missing_fields),
                 } for r in incomplete[:20]]), width="stretch", hide_index=True)
+                _open_profile_picker([r.profile for r in incomplete[:20]], "open_incomplete")
 
         with col2:
-            st.subheader("Top Astrology Matches")
+            theme.section("Top Astrology Matches")
             top_matches = top_astrology_matches(session)
             if top_matches:
                 st.dataframe(pd.DataFrame([{
@@ -110,17 +128,18 @@ with tab_insights:
             else:
                 st.caption("No astrology matches computed yet.")
 
-            st.subheader("Stale Cases")
+            theme.section("Stale Cases")
             stale = stale_cases(session)
             st.caption(f"{len(stale)} active profile(s) with no activity in 14+ days")
             if stale:
                 st.dataframe(pd.DataFrame([{"ID": p.id, "Name": p.full_name, "Stage": p.stage}
                                             for p in stale]), width="stretch", hide_index=True)
+                _open_profile_picker(stale, "open_stale")
 
         st.divider()
-        st.subheader("Best Match Finder")
+        theme.section("Best Match Finder")
         st.caption(
-            "Moved — use **Matching → Find Matches For One Profile** for this. "
+            "Moved — use **Matchmaking → Find Matches for Someone** for this. "
             "That version also includes astrology koota scores and lets you drill into "
             "full match detail (AI recommendation, save result) for any candidate."
         )

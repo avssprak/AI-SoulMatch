@@ -4,15 +4,16 @@ import pandas as pd
 import streamlit as st
 from sqlalchemy import select
 
-from soulmatch import auth
+from soulmatch import auth, theme
 from soulmatch.db import get_session
 from soulmatch.models import TASK_STATUSES, Activity, Profile, Task, utcnow
+from soulmatch.nav import TASKS_OVERDUE_PREF_KEY, open_profile_button
 from soulmatch.tasks import overdue_tasks, upcoming_tasks
 
 current_user = auth.require_login()
 can_write = auth.can_edit(current_user["role"])
 
-st.title("✅ Tasks & Reminders")
+theme.page_header("Tasks & Reminders", "Follow-ups for every introduction — nothing slips through.")
 if not can_write:
     st.caption("Your account has read-only (Viewer) access.")
 
@@ -29,7 +30,7 @@ c3.metric("Due in 7 Days", len(upcoming))
 st.divider()
 
 status_filter = st.multiselect("Status", TASK_STATUSES, default=["Pending"])
-overdue_only = st.checkbox("Overdue only", value=False)
+overdue_only = st.checkbox("Overdue only", value=st.session_state.pop(TASKS_OVERDUE_PREF_KEY, False))
 
 with get_session() as session:
     query = select(Task)
@@ -42,7 +43,7 @@ with get_session() as session:
         tasks = [t for t in tasks if t.status == "Pending" and t.due_date and t.due_date < today]
 
     if not tasks:
-        st.info("No tasks match these filters.")
+        theme.empty_state("No tasks match these filters", "Adjust the status filter above, or create tasks from a profile's detail view.", icon="✅")
     else:
         profile_ids = {t.profile_id for t in tasks}
         profiles = {p.id: p for p in session.scalars(select(Profile).where(Profile.id.in_(profile_ids))).all()}
@@ -68,10 +69,13 @@ with get_session() as session:
         row_selected_task_id = int(df.iloc[selected_task_rows[0]]["id"]) if selected_task_rows else None
         if row_selected_task_id is not None:
             st.caption("Row selected — jump to \"Mark task complete\" below.")
+            selected_task = session.get(Task, row_selected_task_id)
+            if selected_task and profiles.get(selected_task.profile_id):
+                open_profile_button(selected_task.profile_id)
 
         pending_shown = [t for t in tasks if t.status == "Pending"]
         if can_write and pending_shown:
-            st.subheader("Mark task complete")
+            theme.section("Mark task complete")
             options = [t.id for t in pending_shown]
             default_index = options.index(row_selected_task_id) if row_selected_task_id in options else 0
             task_id = st.selectbox(

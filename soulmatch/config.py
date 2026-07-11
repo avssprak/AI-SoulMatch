@@ -27,6 +27,11 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
 
+# "local" — any OpenAI-compatible chat-completions server (LM Studio, Ollama, etc.)
+# running on the same machine/network, e.g. http://localhost:1234/v1/chat/completions
+LOCAL_LLM_URL = os.getenv("LOCAL_LLM_URL", "http://localhost:1234/v1/chat/completions")
+LOCAL_LLM_MODEL = os.getenv("LOCAL_LLM_MODEL", "google/gemma-3-1B-it-QAT")
+
 # First-run admin account, auto-created if the users table is empty.
 # CHANGE THE PASSWORD after first login, or set these in .env before first run.
 BOOTSTRAP_ADMIN_USERNAME = os.getenv("BOOTSTRAP_ADMIN_USERNAME", "admin")
