@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 from sqlalchemy import or_, select
 
-from soulmatch import auth
+from soulmatch import auth, billing, config
 from soulmatch.astrology.geo import lookup as geo_lookup
 from soulmatch.db import get_session
 from soulmatch.documents import DOCUMENT_KINDS, delete_document, read_document, save_document
@@ -19,6 +19,7 @@ from soulmatch.nav import consume_open_profile_request
 from soulmatch.profiles import age_from_dob, delete_profile, is_match_ready, profile_completeness
 from soulmatch.search import describe_filters, parse_query
 from soulmatch.summary import profile_summary_html
+from soulmatch.tenancy import get_owned, owned, owner_id_of
 from soulmatch import theme
 from soulmatch.ui import flash, show_flash, stage_badge
 
@@ -60,6 +61,7 @@ def _print_summary_dialog(profile: Profile, photo_bytes: bytes | None) -> None:
     )
 
 current_user = auth.require_login()
+owner = owner_id_of(current_user)
 can_write = auth.can_edit(current_user["role"])
 
 theme.page_header("Profiles", "Every bride and groom in your practice — browse, edit, and track each case.")
@@ -99,37 +101,51 @@ with tab_search:
         "🔎 Search in plain English (optional)",
         expanded=bool(st.session_state.get("_nl_extra_filters")),
     ):
-        st.caption(
-            "Describe who you're looking for — fills in the filters below, and applies a few "
-            "extra ones directly (age range, food preference, horoscope status, ...)."
-        )
-        nl_col1, nl_col2 = st.columns([4, 1])
-        nl_query = nl_col1.text_input(
-            "Describe who you're looking for", key="profiles_nl_query", label_visibility="collapsed",
-            placeholder='e.g. "Brahmin brides in Bangalore under 28 with a horoscope"',
-        )
-        if nl_col2.button("Apply", key="profiles_nl_apply") and nl_query.strip():
-            with get_session() as nl_session:
-                try:
-                    nl_filters = parse_query(nl_session, nl_query)
-                except LLMError as e:
-                    st.error(str(e))
-                    nl_filters = None
-            if nl_filters:
-                prefill = {}
-                if nl_filters.get("gender") in ("Bride", "Groom"):
-                    prefill["pf_gender"] = nl_filters["gender"]
-                if nl_filters.get("religion"):
-                    prefill["pf_religion"] = nl_filters["religion"]
-                if nl_filters.get("current_location"):
-                    prefill["pf_location"] = nl_filters["current_location"]
-                if nl_filters.get("stage"):
-                    prefill["pf_stage"] = nl_filters["stage"]
-                extra = {k: nl_filters.get(k) for k in NL_EXTRA_FILTER_KEYS if nl_filters.get(k) is not None}
-                st.session_state["_nl_prefill"] = prefill
-                st.session_state["_nl_extra_filters"] = extra
-                flash(f"Parsed as: {describe_filters(nl_filters)}")
-                st.rerun()
+        if not billing.can_use_nl_search(current_user):
+            st.info(billing.NL_SEARCH_TEASE)
+            nl_query = ""
+        else:
+            st.caption(
+                "Describe who you're looking for — fills in the filters below, and applies a few "
+                "extra ones directly (age range, food preference, horoscope status, ...)."
+            )
+            nl_col1, nl_col2 = st.columns([4, 1])
+            nl_query = nl_col1.text_input(
+                "Describe who you're looking for", key="profiles_nl_query", label_visibility="collapsed",
+                placeholder='e.g. "Brahmin brides in Bangalore under 28 with a horoscope"',
+            )
+            if nl_col2.button("Apply", key="profiles_nl_apply") and nl_query.strip():
+                with get_session() as nl_session:
+                    try:
+                        if config.LLM_PROVIDER == "mock":
+                            nl_filters = parse_query(nl_session, owner, nl_query)
+                        else:
+                            billing.require_quota(nl_session, current_user)
+                            usage = {"tokens_in": 0, "tokens_out": 0}
+                            nl_filters = parse_query(nl_session, owner, nl_query, usage_out=usage)
+                            billing.record_usage(nl_session, owner, "nl_search", usage["tokens_in"], usage["tokens_out"])
+                            nl_session.commit()
+                    except billing.QuotaExceeded as e:
+                        st.warning(str(e))
+                        nl_filters = None
+                    except LLMError as e:
+                        st.error(str(e))
+                        nl_filters = None
+                if nl_filters:
+                    prefill = {}
+                    if nl_filters.get("gender") in ("Bride", "Groom"):
+                        prefill["pf_gender"] = nl_filters["gender"]
+                    if nl_filters.get("religion"):
+                        prefill["pf_religion"] = nl_filters["religion"]
+                    if nl_filters.get("current_location"):
+                        prefill["pf_location"] = nl_filters["current_location"]
+                    if nl_filters.get("stage"):
+                        prefill["pf_stage"] = nl_filters["stage"]
+                    extra = {k: nl_filters.get(k) for k in NL_EXTRA_FILTER_KEYS if nl_filters.get(k) is not None}
+                    st.session_state["_nl_prefill"] = prefill
+                    st.session_state["_nl_extra_filters"] = extra
+                    flash(f"Parsed as: {describe_filters(nl_filters)}")
+                    st.rerun()
 
         nl_extra_active = st.session_state.get("_nl_extra_filters")
         if nl_extra_active:
@@ -154,7 +170,7 @@ with tab_search:
     )
 
     with get_session() as session:
-        query = select(Profile)
+        query = owned(select(Profile), Profile, owner)
         if gender_filter != "All":
             query = query.where(Profile.gender == gender_filter)
         if stage_filter != "All":
@@ -223,7 +239,7 @@ with tab_search:
                         with get_session() as bulk_session:
                             deleted = 0
                             for pid in selected_ids:
-                                target = bulk_session.get(Profile, pid)
+                                target = get_owned(bulk_session, Profile, pid, owner)
                                 if target:
                                     delete_profile(bulk_session, target)
                                     deleted += 1
@@ -250,7 +266,10 @@ with tab_search:
         )
 
         with get_session() as session:
-            profile = session.get(Profile, selected_id)
+            profile = get_owned(session, Profile, selected_id, owner)
+            if profile is None:
+                st.warning("Profile not found.")
+                st.stop()
 
             # --- Header card: photo, badge, completeness, quick stage move ---
             percent, missing_fields = profile_completeness(profile)
@@ -307,7 +326,7 @@ with tab_search:
                         disabled=quick_stage == profile.stage,
                     ):
                         profile.stage = quick_stage
-                        session.add(Activity(profile_id=profile.id, event=f"Stage changed to {quick_stage}",
+                        session.add(Activity(profile_id=profile.id, owner_user_id=owner, event=f"Stage changed to {quick_stage}",
                                               created_by_user_id=current_user["id"]))
                         session.commit()
                         flash(f"Moved to {quick_stage}.")
@@ -405,7 +424,7 @@ with tab_search:
                                 profile.stage = stage
                                 profile.notes = notes or None
                                 if stage_changed:
-                                    session.add(Activity(profile_id=profile.id, event=f"Stage changed to {stage}",
+                                    session.add(Activity(profile_id=profile.id, owner_user_id=owner, event=f"Stage changed to {stage}",
                                                           created_by_user_id=current_user["id"]))
                                 session.commit()
                                 flash("Saved.")
@@ -453,10 +472,10 @@ with tab_search:
                                 st.warning("Choose a file first.")
                             else:
                                 save_document(session, profile.id, doc_kind, doc_file.name, doc_file.read(),
-                                              created_by_user_id=current_user["id"])
+                                              created_by_user_id=current_user["id"], owner_user_id=owner)
                                 if doc_kind == "horoscope":
                                     profile.horoscope_available = True
-                                session.add(Activity(profile_id=profile.id, event="Document Uploaded",
+                                session.add(Activity(profile_id=profile.id, owner_user_id=owner, event="Document Uploaded",
                                                       detail=f"{doc_kind}: {doc_file.name}",
                                                       created_by_user_id=current_user["id"]))
                                 session.commit()
@@ -481,7 +500,7 @@ with tab_search:
                             if tcol2.button("Done", key=f"task_done_{task.id}"):
                                 task.status = "Done"
                                 task.completed_at = utcnow()
-                                session.add(Activity(profile_id=profile.id, event="Task completed",
+                                session.add(Activity(profile_id=profile.id, owner_user_id=owner, event="Task completed",
                                                       detail=task.title, created_by_user_id=current_user["id"]))
                                 session.commit()
                                 st.rerun()
@@ -503,9 +522,9 @@ with tab_search:
                             if not final_title:
                                 st.warning("Enter a task title.")
                             else:
-                                session.add(Task(profile_id=profile.id, title=final_title, due_date=due,
+                                session.add(Task(profile_id=profile.id, owner_user_id=owner, title=final_title, due_date=due,
                                                   created_by_user_id=current_user["id"]))
-                                session.add(Activity(profile_id=profile.id, event="Task added", detail=final_title,
+                                session.add(Activity(profile_id=profile.id, owner_user_id=owner, event="Task added", detail=final_title,
                                                       created_by_user_id=current_user["id"]))
                                 session.commit()
                                 st.rerun()
@@ -572,7 +591,7 @@ with tab_search:
                         detail = st.text_input("Detail (optional)")
                         if st.form_submit_button("Log activity"):
                             if event:
-                                session.add(Activity(profile_id=profile.id, event=event, detail=detail or None,
+                                session.add(Activity(profile_id=profile.id, owner_user_id=owner, event=event, detail=detail or None,
                                                       created_by_user_id=current_user["id"]))
                                 session.commit()
                                 st.rerun()
@@ -648,7 +667,7 @@ with tab_manual:
         if pending:
             with get_session() as session:
                 duplicates = find_duplicate_candidates(
-                    session, full_name=pending["full_name"], gender=pending["gender"],
+                    session, owner, full_name=pending["full_name"], gender=pending["gender"],
                     phone=pending["phone"], dob=pending["dob"],
                 )
             if duplicates:
@@ -662,15 +681,19 @@ with tab_manual:
             with st.container(horizontal=True):
                 if st.button("Create profile" + (" anyway" if duplicates else ""), type="primary"):
                     with get_session() as session:
-                        profile = Profile(stage="New", **pending)
-                        session.add(profile)
-                        session.flush()
-                        session.add(Activity(profile_id=profile.id, event="Profile Created", detail="Manual entry",
-                                              created_by_user_id=current_user["id"]))
-                        session.commit()
-                        new_id = profile.id
-                    del st.session_state["pending_manual_profile"]
-                    st.success(f"Created profile #{new_id}.")
+                        can_add, cap_message = billing.can_add_profile(session, current_user)
+                        if not can_add:
+                            st.warning(cap_message)
+                        else:
+                            profile = Profile(stage="New", owner_user_id=owner, **pending)
+                            session.add(profile)
+                            session.flush()
+                            session.add(Activity(profile_id=profile.id, owner_user_id=owner, event="Profile Created", detail="Manual entry",
+                                                  created_by_user_id=current_user["id"]))
+                            session.commit()
+                            new_id = profile.id
+                            del st.session_state["pending_manual_profile"]
+                            st.success(f"Created profile #{new_id}.")
                 if st.button("Cancel"):
                     del st.session_state["pending_manual_profile"]
                     st.rerun()
@@ -682,7 +705,7 @@ with tab_duplicates:
         "not the message-level check shown while extracting a new one."
     )
     with get_session() as session:
-        pairs = find_all_duplicate_pairs(session)
+        pairs = find_all_duplicate_pairs(session, owner)
 
     if not pairs:
         st.info("No likely duplicate profiles found.")
@@ -706,8 +729,8 @@ with tab_duplicates:
                     with st.container(horizontal=True):
                         if st.button(f"Merge #{b.id} into #{a.id} (keep #{a.id})", key=f"merge_pair_{a.id}_{b.id}_a"):
                             with get_session() as session:
-                                keep = session.get(Profile, a.id)
-                                remove = session.get(Profile, b.id)
+                                keep = get_owned(session, Profile, a.id, owner)
+                                remove = get_owned(session, Profile, b.id, owner)
                                 summary = merge_profiles(session, keep=keep, remove=remove,
                                                           created_by_user_id=current_user["id"])
                             # a profile just vanished from the Search & Manage table (rendered
@@ -722,8 +745,8 @@ with tab_duplicates:
                             st.rerun()
                         if st.button(f"Merge #{a.id} into #{b.id} (keep #{b.id})", key=f"merge_pair_{a.id}_{b.id}_b"):
                             with get_session() as session:
-                                keep = session.get(Profile, b.id)
-                                remove = session.get(Profile, a.id)
+                                keep = get_owned(session, Profile, b.id, owner)
+                                remove = get_owned(session, Profile, a.id, owner)
                                 summary = merge_profiles(session, keep=keep, remove=remove,
                                                           created_by_user_id=current_user["id"])
                             st.session_state["_clear_profiles_selection"] = True

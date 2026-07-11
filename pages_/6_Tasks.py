@@ -9,8 +9,10 @@ from soulmatch.db import get_session
 from soulmatch.models import TASK_STATUSES, Activity, Profile, Task, utcnow
 from soulmatch.nav import TASKS_OVERDUE_PREF_KEY, open_profile_button
 from soulmatch.tasks import overdue_tasks, upcoming_tasks
+from soulmatch.tenancy import get_owned, owned, owner_id_of
 
 current_user = auth.require_login()
+owner = owner_id_of(current_user)
 can_write = auth.can_edit(current_user["role"])
 
 theme.page_header("Tasks & Reminders", "Follow-ups for every introduction — nothing slips through.")
@@ -18,9 +20,9 @@ if not can_write:
     st.caption("Your account has read-only (Viewer) access.")
 
 with get_session() as session:
-    all_pending = session.scalars(select(Task).where(Task.status == "Pending")).all()
-    overdue = overdue_tasks(session)
-    upcoming = upcoming_tasks(session)
+    all_pending = session.scalars(owned(select(Task).where(Task.status == "Pending"), Task, owner)).all()
+    overdue = overdue_tasks(session, owner)
+    upcoming = upcoming_tasks(session, owner)
 
 c1, c2, c3 = st.columns(3)
 c1.metric("Pending Tasks", len(all_pending))
@@ -33,7 +35,7 @@ status_filter = st.multiselect("Status", TASK_STATUSES, default=["Pending"])
 overdue_only = st.checkbox("Overdue only", value=st.session_state.pop(TASKS_OVERDUE_PREF_KEY, False))
 
 with get_session() as session:
-    query = select(Task)
+    query = owned(select(Task), Task, owner)
     if status_filter:
         query = query.where(Task.status.in_(status_filter))
     tasks = session.scalars(query.order_by(Task.due_date.is_(None), Task.due_date)).all()
@@ -46,7 +48,7 @@ with get_session() as session:
         theme.empty_state("No tasks match these filters", "Adjust the status filter above, or create tasks from a profile's detail view.", icon="✅")
     else:
         profile_ids = {t.profile_id for t in tasks}
-        profiles = {p.id: p for p in session.scalars(select(Profile).where(Profile.id.in_(profile_ids))).all()}
+        profiles = {p.id: p for p in session.scalars(owned(select(Profile).where(Profile.id.in_(profile_ids)), Profile, owner)).all()}
 
         today = date.today()
         rows = []
@@ -69,7 +71,7 @@ with get_session() as session:
         row_selected_task_id = int(df.iloc[selected_task_rows[0]]["id"]) if selected_task_rows else None
         if row_selected_task_id is not None:
             st.caption("Row selected — jump to \"Mark task complete\" below.")
-            selected_task = session.get(Task, row_selected_task_id)
+            selected_task = get_owned(session, Task, row_selected_task_id, owner)
             if selected_task and profiles.get(selected_task.profile_id):
                 open_profile_button(selected_task.profile_id)
 
@@ -89,15 +91,15 @@ with get_session() as session:
             )
             with st.container(horizontal=True):
                 if st.button("Mark Done", type="primary"):
-                    task = session.get(Task, task_id)
+                    task = get_owned(session, Task, task_id, owner)
                     task.status = "Done"
                     task.completed_at = utcnow()
-                    session.add(Activity(profile_id=task.profile_id, event="Task completed", detail=task.title,
+                    session.add(Activity(profile_id=task.profile_id, owner_user_id=owner, event="Task completed", detail=task.title,
                                           created_by_user_id=current_user["id"]))
                     session.commit()
                     st.rerun()
                 if st.button("Cancel Task"):
-                    task = session.get(Task, task_id)
+                    task = get_owned(session, Task, task_id, owner)
                     task.status = "Cancelled"
                     session.commit()
                     st.rerun()

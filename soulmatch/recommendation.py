@@ -59,7 +59,7 @@ def _profile_brief(p: Profile) -> dict:
 
 def generate_recommendation(
     bride: Profile, groom: Profile, practical: dict, astro: dict | None,
-    provider: str | None = None,
+    provider: str | None = None, usage_out: dict | None = None,
 ) -> dict:
     """practical: {"score": float, "recommended": bool, "strengths": [...], "weaknesses": [...]}
     astro: full_compatibility() result dict, or None if not computed."""
@@ -74,7 +74,7 @@ def generate_recommendation(
             practical=json.dumps(practical),
             astro=json.dumps(astro) if astro else "not available",
         )
-        raw = llm.complete_json(prompt, provider=provider)
+        raw = llm.complete_json(prompt, provider=provider, usage_out=usage_out)
         result = _clean(raw)
     result["_provider"] = provider
     return result

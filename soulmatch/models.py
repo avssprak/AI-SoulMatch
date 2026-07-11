@@ -66,11 +66,16 @@ STANDARD_TASK_TITLES = [
     "Schedule second meeting",
 ]
 
-# Staff-facing roles. Family/Bride/Groom self-service roles from the PRD are
-# deferred to a future parent-portal phase — there's no UI surface for them
-# yet, and a role with nothing it can do is a half-finished feature.
-ROLES = ["Administrator", "Volunteer", "Coordinator", "Viewer"]
-EDITOR_ROLES = {"Administrator", "Volunteer", "Coordinator"}
+# V3 SaaS model (see V3_PLAN.md Part 0): one customer-facing role. A Member
+# is a parent or individual with a private workspace — every domain row they
+# create carries their owner_user_id and no other Member can ever see it.
+# Admin is the platform operator (support, customer list, metrics); Admin's
+# own domain data is scoped exactly like a Member's. The old staff roles
+# (Administrator/Volunteer/Coordinator/Viewer) are migrated in db.py.
+ROLES = ["Member", "Admin"]
+EDITOR_ROLES = {"Member", "Admin"}
+
+PLANS = ["free", "plus", "pro"]
 
 
 class User(Base):
@@ -78,9 +83,13 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     username: Mapped[str] = mapped_column(String(100), unique=True)
+    # For self-service signups username IS the email; kept as two columns so
+    # the pre-V3 admin account (a bare username) keeps working.
+    email: Mapped[str | None] = mapped_column(String(255))
     password_hash: Mapped[str] = mapped_column(String(255))
     full_name: Mapped[str | None] = mapped_column(String(255))
-    role: Mapped[str] = mapped_column(String(30), default="Volunteer")
+    role: Mapped[str] = mapped_column(String(30), default="Member")
+    plan: Mapped[str] = mapped_column(String(20), default="free")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_login: Mapped[datetime | None] = mapped_column(DateTime)
@@ -90,10 +99,26 @@ class User(Base):
     session_epoch: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class AiUsage(Base):
+    """One row per metered AI action (V3-2) — extraction, AI match
+    recommendation, or NL search. Never written for the mock provider."""
+
+    __tablename__ = "ai_usage"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    action: Mapped[str] = mapped_column(String(40))  # "extract" | "recommend" | "nl_search"
+    tokens_in: Mapped[int] = mapped_column(Integer, default=0)
+    tokens_out: Mapped[int] = mapped_column(Integer, default=0)
+    cost_estimate_inr: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class RawMessage(Base):
     __tablename__ = "raw_messages"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
     source: Mapped[str] = mapped_column(String(50), default="whatsapp_export")
     chat_name: Mapped[str | None] = mapped_column(String(255))
     sender: Mapped[str | None] = mapped_column(String(255))
@@ -112,6 +137,8 @@ class Profile(Base):
     __tablename__ = "profiles"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # Tenant boundary — every read path must filter on this (see soulmatch.tenancy).
+    owner_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
 
     # Personal
     full_name: Mapped[str | None] = mapped_column(String(255))
@@ -183,6 +210,7 @@ class Document(Base):
     __tablename__ = "documents"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
     profile_id: Mapped[int | None] = mapped_column(ForeignKey("profiles.id"))
     kind: Mapped[str] = mapped_column(String(50))  # biodata / horoscope / photo / other
     filename: Mapped[str] = mapped_column(String(500))
@@ -197,6 +225,7 @@ class MatchResult(Base):
     __tablename__ = "match_results"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
     bride_id: Mapped[int] = mapped_column(ForeignKey("profiles.id"))
     groom_id: Mapped[int] = mapped_column(ForeignKey("profiles.id"))
     practical_score: Mapped[float | None] = mapped_column(Float)
@@ -214,6 +243,7 @@ class Activity(Base):
     __tablename__ = "activities"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
     profile_id: Mapped[int] = mapped_column(ForeignKey("profiles.id"))
     event: Mapped[str] = mapped_column(String(255))
     detail: Mapped[str | None] = mapped_column(Text)
@@ -229,6 +259,7 @@ class Task(Base):
     __tablename__ = "tasks"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
     profile_id: Mapped[int] = mapped_column(ForeignKey("profiles.id"))
     title: Mapped[str] = mapped_column(String(255))
     due_date: Mapped[date | None] = mapped_column(Date)

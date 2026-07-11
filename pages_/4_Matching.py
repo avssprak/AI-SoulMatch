@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 from sqlalchemy import select
 
-from soulmatch import auth
+from soulmatch import auth, billing, config
 from soulmatch.astrology.engine import AstrologyError, BirthDetails, build_chart, full_compatibility
 from soulmatch.db import get_session
 from soulmatch.extraction.llm import LLMError
@@ -13,6 +13,7 @@ from soulmatch.matchview import render_recommendation, render_saved_match_result
 from soulmatch.models import Activity, MatchResult, Profile, User
 from soulmatch.preferences import CandidatePreferences, filter_candidates
 from soulmatch.recommendation import generate_recommendation
+from soulmatch.tenancy import get_owned, owned, owner_id_of
 from soulmatch import theme
 from soulmatch.ui import flash, show_flash
 
@@ -36,8 +37,8 @@ def render_match_detail(bride_id: int, groom_id: int, can_write: bool, state_pre
 
     if st.button("Evaluate Match", type="primary", key=f"{state_prefix}_evaluate_btn"):
         with get_session() as session:
-            bride = session.get(Profile, bride_id)
-            groom = session.get(Profile, groom_id)
+            bride = get_owned(session, Profile, bride_id, owner)
+            groom = get_owned(session, Profile, groom_id, owner)
             outcome = evaluate_match(bride, groom)
 
             koota_total = None
@@ -104,16 +105,27 @@ def render_match_detail(bride_id: int, groom_id: int, can_write: bool, state_pre
             st.info("Add DOB, birth time and birth place for both profiles to see astrology compatibility.")
 
         theme.section("AI Recommendation")
-        if st.button("Generate AI Recommendation", key=f"{state_prefix}_generate_rec_btn"):
+        if not billing.can_use_ai_explanations(current_user):
+            st.info(billing.UPGRADE_TEASE)
+        elif st.button("Generate AI Recommendation", key=f"{state_prefix}_generate_rec_btn"):
             with get_session() as session:
-                bride = session.get(Profile, bride_id)
-                groom = session.get(Profile, groom_id)
+                bride = get_owned(session, Profile, bride_id, owner)
+                groom = get_owned(session, Profile, groom_id, owner)
                 practical = {
                     "score": outcome.score, "recommended": outcome.recommended,
                     "strengths": outcome.strengths(), "weaknesses": outcome.weaknesses(),
                 }
                 try:
-                    rec = generate_recommendation(bride, groom, practical, astro_result)
+                    if config.LLM_PROVIDER == "mock":
+                        rec = generate_recommendation(bride, groom, practical, astro_result)
+                    else:
+                        billing.require_quota(session, current_user)
+                        usage = {"tokens_in": 0, "tokens_out": 0}
+                        rec = generate_recommendation(bride, groom, practical, astro_result, usage_out=usage)
+                        billing.record_usage(session, owner, "recommend", usage["tokens_in"], usage["tokens_out"])
+                        session.commit()
+                except billing.QuotaExceeded as e:
+                    st.warning(str(e))
                 except LLMError as e:
                     st.error(str(e))
                 else:
@@ -127,6 +139,7 @@ def render_match_detail(bride_id: int, groom_id: int, can_write: bool, state_pre
         if can_write and st.button("Save this match result", type="primary", key=f"{state_prefix}_save_btn"):
             with get_session() as session2:
                 mr = MatchResult(
+                    owner_user_id=owner,
                     bride_id=bride_id, groom_id=groom_id,
                     practical_score=outcome.score,
                     practical_detail={"strengths": outcome.strengths(), "weaknesses": outcome.weaknesses()},
@@ -138,9 +151,9 @@ def render_match_detail(bride_id: int, groom_id: int, can_write: bool, state_pre
                     created_by_user_id=current_user["id"],
                 )
                 session2.add(mr)
-                session2.add(Activity(profile_id=bride_id, event="Match evaluated",
+                session2.add(Activity(profile_id=bride_id, owner_user_id=owner, event="Match evaluated",
                                        detail=f"vs groom #{groom_id}", created_by_user_id=current_user["id"]))
-                session2.add(Activity(profile_id=groom_id, event="Match evaluated",
+                session2.add(Activity(profile_id=groom_id, owner_user_id=owner, event="Match evaluated",
                                        detail=f"vs bride #{bride_id}", created_by_user_id=current_user["id"]))
                 session2.commit()
             flash("Match result saved.")
@@ -148,6 +161,7 @@ def render_match_detail(bride_id: int, groom_id: int, can_write: bool, state_pre
 
 
 current_user = auth.require_login()
+owner = owner_id_of(current_user)
 can_write = auth.can_edit(current_user["role"])
 
 theme.page_header("Matchmaking", "Score bride–groom pairs on practical criteria, Vedic compatibility, and AI judgment.")
@@ -156,9 +170,9 @@ if not can_write:
     st.caption("Your account has read-only (Viewer) access — you can evaluate matches but not save results.")
 
 with get_session() as session:
-    brides = session.scalars(select(Profile).where(Profile.gender == "Bride")).all()
-    grooms = session.scalars(select(Profile).where(Profile.gender == "Groom")).all()
-    _saved_match_count = len(session.scalars(select(MatchResult)).all())
+    brides = session.scalars(owned(select(Profile).where(Profile.gender == "Bride"), Profile, owner)).all()
+    grooms = session.scalars(owned(select(Profile).where(Profile.gender == "Groom"), Profile, owner)).all()
+    _saved_match_count = len(session.scalars(owned(select(MatchResult), MatchResult, owner)).all())
 
 if not brides or not grooms:
     st.info("Need at least one Bride and one Groom profile. Add some via **Import Profiles** or **Profiles**.")
@@ -251,9 +265,9 @@ with tab_seeking:
     elif filtered_candidate_pool and st.button(f"Find best {opposite_label} matches", type="primary"):
         rows = []
         with get_session() as session:
-            anchor = session.get(Profile, anchor_id)
+            anchor = get_owned(session, Profile, anchor_id, owner)
             for candidate in filtered_candidate_pool:
-                cand = session.get(Profile, candidate.id)
+                cand = get_owned(session, Profile, candidate.id, owner)
                 bride, groom = (anchor, cand) if seeking_gender == "Bride" else (cand, anchor)
                 outcome = evaluate_match(bride, groom)
 
@@ -316,7 +330,9 @@ with tab_seeking:
             candidate_ids = [int(df.iloc[i]["Candidate ID"]) for i in selected_rows]
             with get_session() as session:
                 cand_profiles = {
-                    p.id: p for p in session.scalars(select(Profile).where(Profile.id.in_(candidate_ids))).all()
+                    p.id: p for p in session.scalars(
+                        owned(select(Profile).where(Profile.id.in_(candidate_ids)), Profile, owner)
+                    ).all()
                 }
             col_labels = {cid: f"#{cid} {cand_profiles[cid].full_name or 'Unnamed'}" for cid in candidate_ids
                           if cid in cand_profiles}
@@ -383,10 +399,12 @@ with tab_all:
 
 with tab_saved:
     with get_session() as session:
-        saved_matches = session.scalars(select(MatchResult).order_by(MatchResult.created_at.desc())).all()
+        saved_matches = session.scalars(
+            owned(select(MatchResult), MatchResult, owner).order_by(MatchResult.created_at.desc())
+        ).all()
         involved_ids = {m.bride_id for m in saved_matches} | {m.groom_id for m in saved_matches}
         profiles_by_id = {
-            p.id: p for p in session.scalars(select(Profile).where(Profile.id.in_(involved_ids))).all()
+            p.id: p for p in session.scalars(owned(select(Profile).where(Profile.id.in_(involved_ids)), Profile, owner)).all()
         } if involved_ids else {}
         actor_ids = {m.created_by_user_id for m in saved_matches if m.created_by_user_id}
         actor_names = {
@@ -426,9 +444,9 @@ with tab_saved:
         if selected_saved_rows:
             mr_id = int(saved_df.iloc[selected_saved_rows[0]]["id"])
             with get_session() as session:
-                mr = session.get(MatchResult, mr_id)
-                bride = session.get(Profile, mr.bride_id) if mr else None
-                groom = session.get(Profile, mr.groom_id) if mr else None
+                mr = get_owned(session, MatchResult, mr_id, owner)
+                bride = get_owned(session, Profile, mr.bride_id, owner) if mr else None
+                groom = get_owned(session, Profile, mr.groom_id, owner) if mr else None
             if mr:
                 st.divider()
                 render_saved_match_result(mr, bride, groom)
@@ -440,7 +458,7 @@ with tab_saved:
                         with st.container(horizontal=True):
                             if st.button("Yes, delete", key=f"confirm_delete_match_btn_{mr.id}", type="primary"):
                                 with get_session() as del_session:
-                                    target = del_session.get(MatchResult, mr.id)
+                                    target = get_owned(del_session, MatchResult, mr.id, owner)
                                     if target:
                                         del_session.delete(target)
                                         del_session.commit()

@@ -4,7 +4,7 @@ from datetime import date
 import streamlit as st
 from sqlalchemy import select
 
-from soulmatch import auth, config
+from soulmatch import auth, billing, config
 from soulmatch.db import get_session
 from soulmatch.duplicates import find_duplicate_candidates, merge_into_profile
 
@@ -20,7 +20,22 @@ from soulmatch.ingest.document_import import parse_document
 from soulmatch.ingest.whatsapp_export import parse_export
 from soulmatch.models import Activity, Profile, RawMessage
 from soulmatch import theme
+from soulmatch.tenancy import get_owned, owned, owner_id_of
 from soulmatch.ui import flash, show_flash
+
+
+def _metered_extract(session, current_user: dict, text: str) -> dict:
+    """extract_profile(), quota-checked and usage-recorded for real providers.
+    Mock provider is free/offline — no quota check, no AiUsage row (V3-2-1).
+    Raises billing.QuotaExceeded or LLMError; caller handles both."""
+    if config.LLM_PROVIDER == "mock":
+        return extract_profile(text)
+    billing.require_quota(session, current_user)
+    usage = {"tokens_in": 0, "tokens_out": 0}
+    data = extract_profile(text, usage_out=usage)
+    billing.record_usage(session, current_user["id"], "extract", usage["tokens_in"], usage["tokens_out"])
+    return data
+
 
 def _auto_process_raw_messages(message_ids: list[int], current_user: dict) -> None:
     """Run extraction + duplicate-check + save/merge over the given raw
@@ -31,15 +46,28 @@ def _auto_process_raw_messages(message_ids: list[int], current_user: dict) -> No
     if not message_ids:
         return
     saved = merged = skipped_low_conf = skipped_dup = errors = 0
+    skipped_quota = skipped_cap = 0
+    quota_exhausted = cap_reached = False
+    owner = owner_id_of(current_user)
     progress = st.progress(0.0, text="Starting…")
     with get_session() as session:
         for i, mid in enumerate(message_ids, start=1):
             progress.progress(i / len(message_ids), text=f"Processing {i} of {len(message_ids)} — extracting…")
-            raw = session.get(RawMessage, mid)
+            raw = get_owned(session, RawMessage, mid, owner)
             if raw is None or raw.processed:
                 continue
+            if quota_exhausted:
+                skipped_quota += 1
+                continue
+            if cap_reached:
+                skipped_cap += 1
+                continue
             try:
-                data = extract_profile(raw.content)
+                data = _metered_extract(session, current_user, raw.content)
+            except billing.QuotaExceeded:
+                quota_exhausted = True
+                skipped_quota += 1
+                continue
             except LLMError as e:
                 raw.error = str(e)
                 errors += 1
@@ -52,6 +80,7 @@ def _auto_process_raw_messages(message_ids: list[int], current_user: dict) -> No
             dup_dob = data.get("dob") if isinstance(data.get("dob"), date) else None
             duplicates = find_duplicate_candidates(
                 session,
+                owner,
                 full_name=data.get("full_name"),
                 gender=data.get("gender"),
                 phone=data.get("phone"),
@@ -63,7 +92,7 @@ def _auto_process_raw_messages(message_ids: list[int], current_user: dict) -> No
                 target = top.profile
                 filled = merge_into_profile(target, data)
                 session.add(Activity(
-                    profile_id=target.id, event="Profile Merged",
+                    profile_id=target.id, owner_user_id=owner, event="Profile Merged",
                     detail=f"Auto-merged from message #{raw.id} via {config.LLM_PROVIDER} "
                            f"({top.score}% match — {'; '.join(top.reasons)}): "
                            + (f"filled {', '.join(filled)}" if filled else "no new fields"),
@@ -75,14 +104,20 @@ def _auto_process_raw_messages(message_ids: list[int], current_user: dict) -> No
             if top:
                 skipped_dup += 1
                 continue
+            can_add, cap_message = billing.can_add_profile(session, current_user)
+            if not can_add:
+                cap_reached = True
+                skipped_cap += 1
+                continue
             profile = Profile(
                 **{k: v for k, v in data.items() if k in Profile.__table__.columns.keys()},
                 stage="AI Extracted",
                 source_message_id=raw.id,
+                owner_user_id=owner,
             )
             session.add(profile)
             session.flush()
-            session.add(Activity(profile_id=profile.id, event="Profile Created",
+            session.add(Activity(profile_id=profile.id, owner_user_id=owner, event="Profile Created",
                                   detail=f"Auto-extracted via {config.LLM_PROVIDER}",
                                   created_by_user_id=current_user["id"]))
             raw.processed = True
@@ -101,21 +136,34 @@ def _auto_process_raw_messages(message_ids: list[int], current_user: dict) -> No
             "left for manual review.",
             kind="warning",
         )
+    if skipped_quota:
+        flash(
+            f"{skipped_quota} message(s) skipped — AI action quota reached this month. "
+            "Upgrade on My Plan or wait for next month's reset.",
+            kind="warning",
+        )
+    if skipped_cap:
+        flash(
+            f"{skipped_cap} message(s) skipped — profile limit reached for your plan. "
+            "Upgrade on My Plan for unlimited profiles.",
+            kind="warning",
+        )
     if errors:
         flash(f"{errors} message(s) failed extraction (LLM error) and were left unprocessed.", kind="error")
 
 
 current_user = auth.require_login()
+owner = owner_id_of(current_user)
 theme.page_header("Import Profiles", "Bring in WhatsApp chat exports and documents — AI turns them into structured profiles.")
 show_flash()
 
-if not auth.can_edit(current_user["role"]):
-    st.info("Your account has read-only (Viewer) access. Sign in with an editor role to import messages.")
-    st.stop()
-
 with get_session() as _session:
-    _review_count = len(_session.scalars(select(RawMessage).where(RawMessage.processed.is_(False))).all())
-    _history_count = len(_session.scalars(select(RawMessage).where(RawMessage.processed.is_(True))).all())
+    _review_count = len(_session.scalars(
+        owned(select(RawMessage).where(RawMessage.processed.is_(False)), RawMessage, owner)
+    ).all())
+    _history_count = len(_session.scalars(
+        owned(select(RawMessage).where(RawMessage.processed.is_(True)), RawMessage, owner)
+    ).all())
 
 tab_import, tab_review, tab_history = st.tabs(
     ["📥 Import", f"📋 Review queue ({_review_count})", f"🗂️ History ({_history_count})"]
@@ -138,12 +186,13 @@ with tab_import:
                 sender = manual_sender or None
                 with get_session() as session:
                     exists = session.scalar(
-                        select(RawMessage).where(RawMessage.sender == sender, RawMessage.content == content)
+                        owned(select(RawMessage).where(RawMessage.sender == sender, RawMessage.content == content),
+                              RawMessage, owner)
                     )
                     if exists:
                         st.warning("An identical message already exists — not added again.")
                     else:
-                        session.add(RawMessage(source="manual", sender=sender, content=content))
+                        session.add(RawMessage(source="manual", sender=sender, content=content, owner_user_id=owner))
                         session.commit()
                         st.success("Message added. Switch to Review queue to process it.")
             else:
@@ -204,7 +253,9 @@ with tab_import:
             if st.button(f"Import {len(messages)} messages into database", type="primary"):
                 with get_session() as session:
                     existing_pairs = {
-                        tuple(row) for row in session.execute(select(RawMessage.sender, RawMessage.content)).all()
+                        tuple(row) for row in session.execute(
+                            select(RawMessage.sender, RawMessage.content).where(RawMessage.owner_user_id == owner)
+                        ).all()
                     }
                     new_ids, new_count, skipped_count = [], 0, 0
                     for m in messages:
@@ -214,6 +265,7 @@ with tab_import:
                             continue
                         raw = RawMessage(
                             source="whatsapp_export",
+                            owner_user_id=owner,
                             chat_name=uploaded.name,
                             sender=m.sender,
                             sent_at=m.sent_at,
@@ -235,7 +287,7 @@ with tab_import:
                     with get_session() as session:
                         likely_ids = [
                             mid for mid in new_ids
-                            if is_likely_profile(session.get(RawMessage, mid).content)
+                            if is_likely_profile(get_owned(session, RawMessage, mid, owner).content)
                         ]
                     _auto_process_raw_messages(likely_ids, current_user)
                 st.rerun()
@@ -251,13 +303,15 @@ with tab_import:
 
             if st.button(f"Import {len(chunks)} block(s) into database", type="primary", key="import_doc_blocks"):
                 with get_session() as session:
-                    existing = {row[0] for row in session.execute(select(RawMessage.content)).all()}
+                    existing = {row[0] for row in session.execute(
+                        select(RawMessage.content).where(RawMessage.owner_user_id == owner)
+                    ).all()}
                     new_ids, new_count, skipped_count = [], 0, 0
                     for chunk in chunks:
                         if chunk in existing:
                             skipped_count += 1
                             continue
-                        raw = RawMessage(source="document", chat_name=uploaded.name, content=chunk)
+                        raw = RawMessage(source="document", chat_name=uploaded.name, content=chunk, owner_user_id=owner)
                         session.add(raw)
                         session.flush()
                         new_ids.append(raw.id)
@@ -272,7 +326,7 @@ with tab_import:
                     with get_session() as session:
                         likely_ids = [
                             mid for mid in new_ids
-                            if is_likely_profile(session.get(RawMessage, mid).content)
+                            if is_likely_profile(get_owned(session, RawMessage, mid, owner).content)
                         ]
                     _auto_process_raw_messages(likely_ids, current_user)
                 st.rerun()
@@ -282,7 +336,8 @@ with tab_review:
 
     with get_session() as session:
         unprocessed = session.scalars(
-            select(RawMessage).where(RawMessage.processed.is_(False)).order_by(RawMessage.created_at.desc())
+            owned(select(RawMessage).where(RawMessage.processed.is_(False)), RawMessage, owner)
+            .order_by(RawMessage.created_at.desc())
         ).all()
 
     st.caption(f"{len(unprocessed)} unprocessed message(s) total. AI service: **{config.LLM_PROVIDER}**")
@@ -336,7 +391,7 @@ with tab_review:
             ):
                 with get_session() as session:
                     for mid in dupe_ids:
-                        raw = session.get(RawMessage, mid)
+                        raw = get_owned(session, RawMessage, mid, owner)
                         if raw:
                             session.delete(raw)
                     session.commit()
@@ -359,7 +414,7 @@ with tab_review:
                     with st.container(horizontal=True):
                         if st.button("Yes, delete", key=f"confirm_delete_btn_{msg.id}", type="primary"):
                             with get_session() as session:
-                                raw = session.get(RawMessage, msg.id)
+                                raw = get_owned(session, RawMessage, msg.id, owner)
                                 if raw:
                                     session.delete(raw)
                                 session.commit()
@@ -375,16 +430,20 @@ with tab_review:
                             "🔁 Retry extraction" if msg.error else "Extract profile", key=f"extract_{msg.id}",
                         ):
                             try:
-                                data = extract_profile(msg.content)
+                                with get_session() as session:
+                                    data = _metered_extract(session, current_user, msg.content)
+                                    session.commit()
+                            except billing.QuotaExceeded as e:
+                                st.warning(str(e))
                             except LLMError as e:
                                 with get_session() as session:
-                                    raw = session.get(RawMessage, msg.id)
+                                    raw = get_owned(session, RawMessage, msg.id, owner)
                                     raw.error = str(e)
                                     session.commit()
                                 st.error(str(e))
                             else:
                                 with get_session() as session:
-                                    raw = session.get(RawMessage, msg.id)
+                                    raw = get_owned(session, RawMessage, msg.id, owner)
                                     raw.error = None
                                     session.commit()
                                 confidence = data.pop("confidence", 0)
@@ -399,7 +458,7 @@ with tab_review:
                                  "It moves to History and can be reloaded later if you change your mind.",
                         ):
                             with get_session() as session:
-                                raw = session.get(RawMessage, msg.id)
+                                raw = get_owned(session, RawMessage, msg.id, owner)
                                 raw.processed = True
                                 session.commit()
                             st.rerun()
@@ -417,6 +476,7 @@ with tab_review:
                         dup_dob = data.get("dob") if isinstance(data.get("dob"), date) else None
                         duplicates = find_duplicate_candidates(
                             session,
+                            owner,
                             full_name=data.get("full_name"),
                             gender=data.get("gender"),
                             phone=data.get("phone"),
@@ -433,15 +493,15 @@ with tab_review:
                                 )
                                 if dc2.button(f"Merge into #{d.profile.id}", key=f"merge_{msg.id}_{d.profile.id}"):
                                     with get_session() as merge_session:
-                                        target = merge_session.get(Profile, d.profile.id)
+                                        target = get_owned(merge_session, Profile, d.profile.id, owner)
                                         filled = merge_into_profile(target, data)
                                         merge_session.add(Activity(
-                                            profile_id=target.id, event="Profile Merged",
+                                            profile_id=target.id, owner_user_id=owner, event="Profile Merged",
                                             detail=f"Merged from message #{msg.id} via {config.LLM_PROVIDER}: "
                                                    + (f"filled {', '.join(filled)}" if filled else "no new fields"),
                                             created_by_user_id=current_user["id"],
                                         ))
-                                        raw = merge_session.get(RawMessage, msg.id)
+                                        raw = get_owned(merge_session, RawMessage, msg.id, owner)
                                         raw.processed = True
                                         merge_session.commit()
                                     del st.session_state[pending_key]
@@ -452,22 +512,27 @@ with tab_review:
                         save_label = "Save as new profile anyway" if duplicates else "Save profile"
                         if st.button(save_label, key=f"save_{msg.id}", type="primary"):
                             with get_session() as session:
-                                profile = Profile(
-                                    **{k: v for k, v in data.items() if k in Profile.__table__.columns.keys()},
-                                    stage="AI Extracted",
-                                    source_message_id=msg.id,
-                                )
-                                session.add(profile)
-                                session.flush()
-                                session.add(Activity(profile_id=profile.id, event="Profile Created",
-                                                      detail=f"Extracted via {config.LLM_PROVIDER}",
-                                                      created_by_user_id=current_user["id"]))
-                                raw = session.get(RawMessage, msg.id)
-                                raw.processed = True
-                                session.commit()
-                            del st.session_state[pending_key]
-                            flash("Profile created.")
-                            st.rerun()
+                                can_add, cap_message = billing.can_add_profile(session, current_user)
+                                if not can_add:
+                                    st.warning(cap_message)
+                                else:
+                                    profile = Profile(
+                                        **{k: v for k, v in data.items() if k in Profile.__table__.columns.keys()},
+                                        stage="AI Extracted",
+                                        source_message_id=msg.id,
+                                        owner_user_id=owner,
+                                    )
+                                    session.add(profile)
+                                    session.flush()
+                                    session.add(Activity(profile_id=profile.id, owner_user_id=owner, event="Profile Created",
+                                                          detail=f"Extracted via {config.LLM_PROVIDER}",
+                                                          created_by_user_id=current_user["id"]))
+                                    raw = get_owned(session, RawMessage, msg.id, owner)
+                                    raw.processed = True
+                                    session.commit()
+                                    del st.session_state[pending_key]
+                                    flash("Profile created.")
+                                    st.rerun()
                         if st.button(
                             "Start over", key=f"discard_{msg.id}",
                             help="Drops this extraction attempt; the message stays in the queue so you can try again.",
@@ -478,11 +543,14 @@ with tab_review:
 with tab_history:
     with get_session() as session:
         processed_msgs = session.scalars(
-            select(RawMessage).where(RawMessage.processed.is_(True)).order_by(RawMessage.created_at.desc())
+            owned(select(RawMessage).where(RawMessage.processed.is_(True)), RawMessage, owner)
+            .order_by(RawMessage.created_at.desc())
         ).all()[:30]
         profiles_by_msg = {
             p.source_message_id: p
-            for p in session.scalars(select(Profile).where(Profile.source_message_id.isnot(None))).all()
+            for p in session.scalars(
+                owned(select(Profile).where(Profile.source_message_id.isnot(None)), Profile, owner)
+            ).all()
         }
 
     if not processed_msgs:
@@ -496,7 +564,7 @@ with tab_history:
         if st.button(f"Reload all {len(processed_msgs)} shown message(s) for reprocessing", key="bulk_reload"):
             with get_session() as session:
                 for m in processed_msgs:
-                    raw = session.get(RawMessage, m.id)
+                    raw = get_owned(session, RawMessage, m.id, owner)
                     raw.processed = False
                 session.commit()
             flash("Reloaded — check the Review queue tab.")
@@ -517,7 +585,7 @@ with tab_history:
                     with st.container(horizontal=True):
                         if st.button("Yes, delete", key=f"confirm_delete_proc_btn_{msg.id}", type="primary"):
                             with get_session() as session:
-                                raw = session.get(RawMessage, msg.id)
+                                raw = get_owned(session, RawMessage, msg.id, owner)
                                 if raw:
                                     session.delete(raw)
                                 session.commit()
@@ -531,7 +599,7 @@ with tab_history:
                     with st.container(horizontal=True):
                         if st.button("Reload for reprocessing", key=f"reload_{msg.id}"):
                             with get_session() as session:
-                                raw = session.get(RawMessage, msg.id)
+                                raw = get_owned(session, RawMessage, msg.id, owner)
                                 raw.processed = False
                                 session.commit()
                             flash("Reloaded — check the Review queue tab.")

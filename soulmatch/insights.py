@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from .matching.rules import MatchOutcome, evaluate_match
 from .models import Activity, MatchResult, Profile
+from .tenancy import get_owned, owned
 
 IMPORTANT_FIELDS = [
     "dob", "birth_time", "birth_place", "religion", "caste",
@@ -34,8 +35,8 @@ class IncompleteProfile:
     missing_fields: list[str]
 
 
-def incomplete_profiles(session: Session) -> list[IncompleteProfile]:
-    profiles = session.scalars(select(Profile)).all()
+def incomplete_profiles(session: Session, owner_id: int) -> list[IncompleteProfile]:
+    profiles = session.scalars(owned(select(Profile), Profile, owner_id)).all()
     results = []
     for p in profiles:
         missing = [f for f in IMPORTANT_FIELDS if getattr(p, f, None) in (None, "")]
@@ -45,14 +46,14 @@ def incomplete_profiles(session: Session) -> list[IncompleteProfile]:
     return results
 
 
-def pending_horoscope(session: Session) -> list[Profile]:
-    query = select(Profile).where(Profile.horoscope_available.is_not(True))
+def pending_horoscope(session: Session, owner_id: int) -> list[Profile]:
+    query = owned(select(Profile).where(Profile.horoscope_available.is_not(True)), Profile, owner_id)
     return list(session.scalars(query.order_by(Profile.created_at.desc())).all())
 
 
-def top_astrology_matches(session: Session, limit: int = 10) -> list[MatchResult]:
+def top_astrology_matches(session: Session, owner_id: int, limit: int = 10) -> list[MatchResult]:
     query = (
-        select(MatchResult)
+        owned(select(MatchResult), MatchResult, owner_id)
         .where(MatchResult.koota_total.is_not(None))
         .order_by(MatchResult.koota_total.desc())
         .limit(limit)
@@ -60,13 +61,13 @@ def top_astrology_matches(session: Session, limit: int = 10) -> list[MatchResult
     return list(session.scalars(query).all())
 
 
-def stale_cases(session: Session, *, days: int = 14, today: date | None = None) -> list[Profile]:
+def stale_cases(session: Session, owner_id: int, *, days: int = 14, today: date | None = None) -> list[Profile]:
     """Active-pipeline profiles with no logged activity in `days` days."""
     today = today or date.today()
     cutoff = today - timedelta(days=days)
 
     profiles = session.scalars(
-        select(Profile).where(Profile.stage.not_in(INACTIVE_STAGES))
+        owned(select(Profile).where(Profile.stage.not_in(INACTIVE_STAGES)), Profile, owner_id)
     ).all()
 
     stale = []
@@ -84,16 +85,16 @@ def stale_cases(session: Session, *, days: int = 14, today: date | None = None) 
     return stale
 
 
-def best_matches_for(session: Session, profile_id: int, *, limit: int = 5) -> list[tuple[Profile, MatchOutcome]]:
+def best_matches_for(session: Session, owner_id: int, profile_id: int, *, limit: int = 5) -> list[tuple[Profile, MatchOutcome]]:
     """Rank opposite-gender profiles by practical compatibility (Module 6/14).
     Astrology is not recomputed here for speed — drill into a specific
     candidate on the Matching page for the full picture."""
-    subject = session.get(Profile, profile_id)
+    subject = get_owned(session, Profile, profile_id, owner_id)
     if subject is None:
         return []
     opposite_gender = "Groom" if subject.gender == "Bride" else "Bride"
     candidates = session.scalars(
-        select(Profile).where(Profile.gender == opposite_gender, Profile.id != profile_id)
+        owned(select(Profile).where(Profile.gender == opposite_gender, Profile.id != profile_id), Profile, owner_id)
     ).all()
 
     scored = []

@@ -21,6 +21,12 @@ _env_secret_key = os.getenv("SECRET_KEY", "")
 SECRET_KEY = _env_secret_key or secrets.token_hex(32)
 SECRET_KEY_IS_EPHEMERAL = not _env_secret_key
 
+# Blended pricing used to estimate AI-action cost for the Admin usage tile
+# (see soulmatch.billing) — defaults match docs/AI-SoulMatch_Unit_Economics.xlsx.
+LLM_PRICE_IN_USD_PER_MTOK = float(os.getenv("LLM_PRICE_IN_USD_PER_MTOK", "0.30"))
+LLM_PRICE_OUT_USD_PER_MTOK = float(os.getenv("LLM_PRICE_OUT_USD_PER_MTOK", "2.50"))
+USD_INR = float(os.getenv("USD_INR", "86"))
+
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "mock").lower()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-latest")

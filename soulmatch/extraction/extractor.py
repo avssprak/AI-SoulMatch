@@ -94,13 +94,13 @@ def is_likely_profile(text: str) -> bool:
     return sum(1 for k in keywords if k in lower) >= 2
 
 
-def extract_profile(text: str, provider: str | None = None) -> dict:
+def extract_profile(text: str, provider: str | None = None, usage_out: dict | None = None) -> dict:
     provider = (provider or config.LLM_PROVIDER).lower()
     if provider == "mock":
         return _clean(_mock_extract(text))
     schema = json.dumps(PROFILE_FIELDS, indent=2)
     prompt = _PROMPT_TEMPLATE.format(schema=schema, message=text.strip()[:8000])
-    result = llm.complete_json(prompt, provider=provider)
+    result = llm.complete_json(prompt, provider=provider, usage_out=usage_out)
     return _clean(result)
 
 

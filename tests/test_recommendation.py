@@ -52,7 +52,7 @@ def test_mock_recommendation_without_astrology():
 def test_llm_provider_path_uses_complete_json(monkeypatch):
     captured_prompt = {}
 
-    def fake_complete_json(prompt, provider=None):
+    def fake_complete_json(prompt, provider=None, usage_out=None):
         captured_prompt["prompt"] = prompt
         captured_prompt["provider"] = provider
         return {

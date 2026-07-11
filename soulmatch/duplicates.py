@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from .models import Activity, Document, MatchResult, Profile, Task
 from .profiles import age_from_dob
+from .tenancy import owned
 
 NAME_MATCH_THRESHOLD = 0.82  # difflib ratio, 0-1
 MIN_REPORT_SCORE = 40  # don't surface weak/coincidental matches
@@ -48,6 +49,7 @@ class DuplicateCandidate:
 
 def find_duplicate_candidates(
     session: Session,
+    owner_id: int,
     *,
     full_name: str | None,
     gender: str | None,
@@ -59,7 +61,7 @@ def find_duplicate_candidates(
     """Scan existing profiles (same gender) for likely duplicates of the given data."""
     phone_norm = _normalize_phone(phone) or _normalize_phone(whatsapp)
 
-    query = select(Profile)
+    query = owned(select(Profile), Profile, owner_id)
     if gender:
         query = query.where(Profile.gender == gender)
     if exclude_id is not None:
@@ -100,16 +102,17 @@ class DuplicateProfilePair:
     reasons: list[str] = field(default_factory=list)
 
 
-def find_all_duplicate_pairs(session: Session) -> list[DuplicateProfilePair]:
+def find_all_duplicate_pairs(session: Session, owner_id: int) -> list[DuplicateProfilePair]:
     """Pairwise scan of every profile for likely duplicates, reusing the same
     scoring as find_duplicate_candidates. O(n^2) — fine at the scale this app
     operates at (a coordinator's caseload, not a mass-import pipeline)."""
-    all_profiles = session.scalars(select(Profile)).all()
+    all_profiles = session.scalars(owned(select(Profile), Profile, owner_id)).all()
     seen_pairs: set[tuple[int, int]] = set()
     results: list[DuplicateProfilePair] = []
     for profile in all_profiles:
         candidates = find_duplicate_candidates(
             session,
+            owner_id,
             full_name=profile.full_name,
             gender=profile.gender,
             phone=profile.phone,
@@ -196,7 +199,7 @@ def merge_profiles(
     removed_id, removed_name = remove.id, remove.full_name
     session.delete(remove)
     session.add(Activity(
-        profile_id=keep.id, event="Profiles Merged",
+        profile_id=keep.id, owner_user_id=keep.owner_user_id, event="Profiles Merged",
         detail=(
             f"Merged profile #{removed_id} ({removed_name or 'Unnamed'}) into this one: "
             + (f"filled {', '.join(filled)}" if filled else "no new fields")

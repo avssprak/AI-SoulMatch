@@ -1,0 +1,177 @@
+"""Module 15 — Plan limits, AI-action metering & quota enforcement (V3-2).
+
+Single source of truth for what each plan includes (PLAN_LIMITS) plus the
+helpers pages call to record usage, check quotas, and gate features. See
+V3_PLAN.md Sprint V3-2 for the full spec this implements.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import date, datetime, timezone
+
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from . import config
+from .models import AiUsage, Profile, User
+from .tenancy import owned
+
+# None = unlimited. Keep this the only place plan differences are encoded —
+# every gate in the app reads from here rather than branching on plan name.
+PLAN_LIMITS = {
+    "free": {"ai_actions": 15, "profiles": 25, "children": 1,
+             "ai_explanations": False, "nl_search": False, "bulk_imports": 0},
+    "plus": {"ai_actions": 150, "profiles": None, "children": 1,
+             "ai_explanations": True, "nl_search": True, "bulk_imports": 1},
+    "pro": {"ai_actions": 500, "profiles": None, "children": 3,
+            "ai_explanations": True, "nl_search": True, "bulk_imports": None},
+}
+
+# Display-only; kept alongside PLAN_LIMITS so the pricing table on My Plan
+# and the landing page can never drift from what's actually enforced here.
+PLAN_PRICES_INR = {"free": 0, "plus": 149, "pro": 399}
+PLAN_PRICES_INR_ANNUAL = {"free": 0, "plus": 1499, "pro": 3999}
+PLAN_PRICES_USD = {"free": 0, "plus": 4.99, "pro": 9.99}
+PLAN_PRICES_USD_ANNUAL = {"free": 0, "plus": 49, "pro": 99}
+
+AI_ACTIONS = ("extract", "recommend", "nl_search")
+
+
+class QuotaExceeded(Exception):
+    """Raised by require_quota(); .message is ready to show the user directly."""
+
+
+def limits_for(plan: str) -> dict:
+    return PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
+
+
+def estimate_cost_inr(tokens_in: int, tokens_out: int) -> float:
+    cost_usd = (
+        tokens_in * config.LLM_PRICE_IN_USD_PER_MTOK
+        + tokens_out * config.LLM_PRICE_OUT_USD_PER_MTOK
+    ) / 1_000_000
+    return cost_usd * config.USD_INR
+
+
+def record_usage(session: Session, owner_id: int, action: str, tokens_in: int, tokens_out: int) -> AiUsage:
+    """Insert one AiUsage row. Call ONLY after a successful LLM call — a
+    failed call must not consume the caller's quota."""
+    if action not in AI_ACTIONS:
+        raise ValueError(f"Unknown AI action: {action}")
+    row = AiUsage(
+        owner_user_id=owner_id, action=action, tokens_in=tokens_in, tokens_out=tokens_out,
+        cost_estimate_inr=estimate_cost_inr(tokens_in, tokens_out),
+    )
+    session.add(row)
+    session.flush()
+    return row
+
+
+def _month_start(today: date | None = None) -> datetime:
+    today = today or datetime.now(timezone.utc).date()
+    return datetime(today.year, today.month, 1, tzinfo=timezone.utc)
+
+
+def _next_month_start(today: date | None = None) -> date:
+    today = today or datetime.now(timezone.utc).date()
+    return date(today.year + (today.month == 12), today.month % 12 + 1, 1)
+
+
+@dataclass
+class QuotaStatus:
+    used: int
+    limit: int | None  # None = unlimited
+    resets_on: date
+
+    @property
+    def exhausted(self) -> bool:
+        return self.limit is not None and self.used >= self.limit
+
+
+def quota_status(session: Session, user: dict, *, today: date | None = None) -> QuotaStatus:
+    """Actions used by this owner so far in the current UTC calendar month."""
+    owner_id = user["id"]
+    limit = limits_for(user.get("plan", "free"))["ai_actions"]
+    used = session.scalar(
+        select(func.count(AiUsage.id)).where(
+            AiUsage.owner_user_id == owner_id,
+            AiUsage.created_at >= _month_start(today),
+        )
+    ) or 0
+    return QuotaStatus(used=used, limit=limit, resets_on=_next_month_start(today))
+
+
+def require_quota(session: Session, user: dict, *, today: date | None = None) -> QuotaStatus:
+    """Raise QuotaExceeded (message ready for st.warning) if the owner has
+    used up this month's AI-action quota. Call BEFORE the LLM call — quota
+    checks must never depend on whether the call that follows succeeds."""
+    status = quota_status(session, user, today=today)
+    if status.exhausted:
+        raise QuotaExceeded(
+            f"You've used {status.used}/{status.limit} AI actions this month — "
+            f"upgrade on My Plan or wait until {status.resets_on:%d %b} when your quota resets."
+        )
+    return status
+
+
+def can_use_ai_explanations(user: dict) -> bool:
+    return limits_for(user.get("plan", "free"))["ai_explanations"]
+
+
+def can_use_nl_search(user: dict) -> bool:
+    return limits_for(user.get("plan", "free"))["nl_search"]
+
+
+UPGRADE_TEASE = (
+    "🔒 **Why this match works** — AI match explanations are on the Plus plan (₹149/mo). "
+    "[See plans](#) on **My Plan**."
+)
+NL_SEARCH_TEASE = (
+    "🔒 Natural-language search is on the Plus plan (₹149/mo). See **My Plan** to upgrade."
+)
+
+
+def can_add_profile(session: Session, user: dict) -> tuple[bool, str]:
+    """Whether this owner may create one more Profile row under their plan's
+    cap. Call before every Profile-create path (Ingest auto-process, Ingest
+    manual save, Profiles Add Manually)."""
+    limit = limits_for(user.get("plan", "free"))["profiles"]
+    if limit is None:
+        return True, ""
+    owner_id = user["id"]
+    count = session.scalar(
+        select(func.count()).select_from(owned(select(Profile.id), Profile, owner_id).subquery())
+    ) or 0
+    if count >= limit:
+        return False, (
+            f"Free plan stores up to {limit} candidate profiles — upgrade to Plus for unlimited."
+        )
+    return True, ""
+
+
+def monthly_usage_summary(session: Session, *, today: date | None = None) -> dict:
+    """Admin-only: this month's total cost and breakdown by action, plus the
+    top-5 heaviest users by cost. See pages_/7_Users.py."""
+    start = _month_start(today)
+    total_cost = session.scalar(
+        select(func.sum(AiUsage.cost_estimate_inr)).where(AiUsage.created_at >= start)
+    ) or 0.0
+    by_action = dict(session.execute(
+        select(AiUsage.action, func.count(AiUsage.id))
+        .where(AiUsage.created_at >= start).group_by(AiUsage.action)
+    ).all())
+    top_rows = session.execute(
+        select(AiUsage.owner_user_id, func.sum(AiUsage.cost_estimate_inr).label("cost"))
+        .where(AiUsage.created_at >= start)
+        .group_by(AiUsage.owner_user_id)
+        .order_by(func.sum(AiUsage.cost_estimate_inr).desc())
+        .limit(5)
+    ).all()
+    owner_ids = [r[0] for r in top_rows]
+    names = {
+        u.id: (u.email or u.username)
+        for u in session.scalars(select(User).where(User.id.in_(owner_ids))).all()
+    } if owner_ids else {}
+    top_users = [{"user": names.get(oid, f"#{oid}"), "cost_inr": cost} for oid, cost in top_rows]
+    return {"total_cost_inr": total_cost, "by_action": by_action, "top_users": top_users}

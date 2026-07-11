@@ -28,6 +28,7 @@ if auth.current_user() is None:
                 st.session_state["user"] = {
                     "id": restored.id, "username": restored.username,
                     "full_name": restored.full_name, "role": restored.role,
+                    "plan": restored.plan,
                 }
             else:
                 del st.query_params["token"]
@@ -48,25 +49,59 @@ if auth.current_user() is None:
                 '<img src="/app/static/mark.svg" style="height:40px; margin-bottom:6px;"/>',
                 unsafe_allow_html=True,
             )
-            st.markdown("### Welcome back")
-            st.caption("Sign in to continue to your workspace.")
-            with st.form("login"):
-                username = st.text_input("Username")
-                password = st.text_input("Password", type="password")
-                submitted = st.form_submit_button("Sign in", type="primary", use_container_width=True)
-            if submitted:
-                with get_session() as session:
-                    user = auth.authenticate(session, username, password)
-                    if user:
-                        st.session_state["user"] = {
-                            "id": user.id, "username": user.username,
-                            "full_name": user.full_name, "role": user.role,
-                        }
-                        st.query_params["token"] = auth.mint_session_token(user)
-                if auth.current_user():
-                    st.rerun()
-                else:
-                    st.error("Invalid username or password.")
+            tab_signin, tab_signup = st.tabs(["Sign in", "Create account"])
+            with tab_signin:
+                st.caption("Sign in to continue to your private workspace.")
+                with st.form("login"):
+                    username = st.text_input("Email or username")
+                    password = st.text_input("Password", type="password")
+                    submitted = st.form_submit_button("Sign in", type="primary", use_container_width=True)
+                if submitted:
+                    with get_session() as session:
+                        user = auth.authenticate(session, username, password)
+                        if user:
+                            st.session_state["user"] = {
+                                "id": user.id, "username": user.username,
+                                "full_name": user.full_name, "role": user.role,
+                                "plan": user.plan,
+                            }
+                            st.query_params["token"] = auth.mint_session_token(user)
+                    if auth.current_user():
+                        st.rerun()
+                    else:
+                        st.error("Invalid username or password.")
+            with tab_signup:
+                st.caption("Free to start — your data stays private to your account.")
+                with st.form("signup"):
+                    su_name = st.text_input("Your name")
+                    su_email = st.text_input("Email")
+                    su_password = st.text_input("Password", type="password")
+                    su_password2 = st.text_input("Confirm password", type="password")
+                    su_submitted = st.form_submit_button(
+                        "Create free account", type="primary", use_container_width=True
+                    )
+                if su_submitted:
+                    # Simple per-connection rate limit against scripted signup abuse.
+                    attempts = st.session_state.get("_signup_attempts", 0) + 1
+                    st.session_state["_signup_attempts"] = attempts
+                    if attempts > 5:
+                        st.error("Too many attempts — please refresh the page and try again later.")
+                    elif su_password != su_password2:
+                        st.error("Passwords do not match.")
+                    else:
+                        try:
+                            with get_session() as session:
+                                new_user = auth.register_member(session, su_email, su_password, su_name)
+                                st.session_state["user"] = {
+                                    "id": new_user.id, "username": new_user.username,
+                                    "full_name": new_user.full_name, "role": new_user.role,
+                                    "plan": new_user.plan,
+                                }
+                                st.query_params["token"] = auth.mint_session_token(new_user)
+                        except ValueError as e:
+                            st.error(str(e))
+                        if auth.current_user():
+                            st.rerun()
 
     landing.render_sections()
     st.stop()
@@ -126,10 +161,11 @@ matching = st.Page("pages_/4_Matching.py", title="Matchmaking", icon=":material/
 astro = st.Page("pages_/5_Astrology.py", title="Horoscope Check", icon=":material/nights_stay:")
 tasks = st.Page("pages_/6_Tasks.py", title="Tasks", icon=":material/task_alt:")
 search = st.Page("pages_/8_Search.py", title="Search & Insights", icon=":material/manage_search:")
+my_plan = st.Page("pages_/9_My_Plan.py", title="My Plan", icon=":material/workspace_premium:")
 
-pages = [dashboard, ingest, profiles, matching, astro, tasks, search]
+pages = [dashboard, ingest, profiles, matching, astro, tasks, search, my_plan]
 if auth.is_admin(current["role"]):
-    pages.append(st.Page("pages_/7_Users.py", title="Users", icon=":material/group:"))
+    pages.append(st.Page("pages_/7_Users.py", title="Customers", icon=":material/group:"))
 
 nav = st.navigation(pages)
 nav.run()

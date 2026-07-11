@@ -24,7 +24,7 @@ def _profile_dir(profile_id: int) -> Path:
 
 def save_document(
     session: Session, profile_id: int, kind: str, filename: str, data: bytes,
-    created_by_user_id: int | None = None,
+    created_by_user_id: int | None = None, owner_user_id: int | None = None,
 ) -> Document:
     if kind not in DOCUMENT_KINDS:
         raise ValueError(f"Unknown document kind: {kind}")
@@ -36,6 +36,7 @@ def save_document(
     doc = Document(
         profile_id=profile_id, kind=kind, filename=safe_name, path=str(dest),
         created_by_user_id=created_by_user_id,
+        owner_user_id=owner_user_id if owner_user_id is not None else created_by_user_id,
     )
     session.add(doc)
     session.flush()

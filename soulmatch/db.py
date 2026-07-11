@@ -22,7 +22,47 @@ _COLUMN_MIGRATIONS = [
     ("tasks", "created_by_user_id", "INTEGER"),
     ("match_results", "created_by_user_id", "INTEGER"),
     ("raw_messages", "error", "TEXT"),
+    # V3 multi-tenancy (see V3_PLAN.md Sprint V3-1)
+    ("users", "email", "VARCHAR(255)"),
+    ("users", "plan", "VARCHAR(20) DEFAULT 'free'"),
+    ("raw_messages", "owner_user_id", "INTEGER"),
+    ("profiles", "owner_user_id", "INTEGER"),
+    ("documents", "owner_user_id", "INTEGER"),
+    ("match_results", "owner_user_id", "INTEGER"),
+    ("activities", "owner_user_id", "INTEGER"),
+    ("tasks", "owner_user_id", "INTEGER"),
 ]
+
+_TENANT_TABLES = ["raw_messages", "profiles", "documents", "match_results", "activities", "tasks"]
+
+
+def _apply_tenancy_migration() -> None:
+    """One-time V3 data migration, safe to run every startup.
+
+    Role collapse: Administrator -> Admin; Volunteer/Coordinator/Viewer ->
+    Member. Ownership backfill: every pre-V3 row belonged to the shared staff
+    workspace, so ALL of it goes to the operator (Admin) account — not to
+    created_by_user_id — because splitting a formerly shared pool by creator
+    would scatter one coherent dataset across newly-privatized accounts and
+    orphan cross-references (e.g. a match result whose bride now lives in
+    another tenant). Demoted staff users start with an empty workspace.
+    """
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE users SET role='Admin' WHERE role='Administrator'"))
+        conn.execute(text(
+            "UPDATE users SET role='Member' WHERE role IN ('Volunteer','Coordinator','Viewer')"
+        ))
+        conn.execute(text("UPDATE users SET plan='free' WHERE plan IS NULL"))
+        admin_id = conn.execute(text(
+            "SELECT id FROM users WHERE role='Admin' ORDER BY id LIMIT 1"
+        )).scalar()
+        if admin_id is None:
+            return  # empty DB — bootstrap admin not created yet; nothing to backfill
+        for table in _TENANT_TABLES:
+            conn.execute(
+                text(f"UPDATE {table} SET owner_user_id = :admin WHERE owner_user_id IS NULL"),  # noqa: S608 — table names from fixed list
+                {"admin": admin_id},
+            )
 
 
 def _apply_column_migrations() -> None:
@@ -40,6 +80,7 @@ def _apply_column_migrations() -> None:
 def init_db() -> None:
     Base.metadata.create_all(engine)
     _apply_column_migrations()
+    _apply_tenancy_migration()
 
 
 def get_session() -> Session:

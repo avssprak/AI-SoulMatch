@@ -1,6 +1,7 @@
 from datetime import date
 
 from soulmatch.extraction.extractor import extract_profile, is_likely_profile
+from soulmatch.profiles import age_from_dob
 
 
 def test_is_likely_profile_positive():
@@ -22,7 +23,9 @@ def test_mock_extract_basic_fields():
     )
     data = extract_profile(text, provider="mock")
     assert data["full_name"] == "Priya Sharma"
-    assert data["age"] == 26
+    # age is recomputed from DOB when one is present (stated ages go stale),
+    # so assert relative to today rather than hardcoding a calendar-dependent value
+    assert data["age"] == age_from_dob(date(1998, 6, 15))
     assert data["gender"] == "Bride"
     assert data["food_preference"] == "Vegetarian"
     assert data["phone"] == "9876543210"

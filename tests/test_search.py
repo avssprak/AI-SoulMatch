@@ -3,7 +3,9 @@ from sqlalchemy.orm import Session
 
 from soulmatch import search
 from soulmatch.extraction import llm
-from soulmatch.models import Base, Profile
+from soulmatch.models import Base, Profile, User
+
+OWNER = 1
 
 
 def _memory_session() -> Session:
@@ -13,16 +15,17 @@ def _memory_session() -> Session:
 
 
 def _seed(session: Session):
+    session.add(User(id=OWNER, username="owner@example.com", password_hash="x", role="Member"))
     session.add_all([
-        Profile(full_name="Priya Sharma", gender="Bride", age=26, religion="Hindu",
+        Profile(owner_user_id=OWNER, full_name="Priya Sharma", gender="Bride", age=26, religion="Hindu",
                 caste="Brahmin", current_location="Bangalore", qualification="B.Tech",
                 occupation="Software Engineer", food_preference="Vegetarian",
                 horoscope_available=True),
-        Profile(full_name="Anjali Rao", gender="Bride", age=32, religion="Hindu",
+        Profile(owner_user_id=OWNER, full_name="Anjali Rao", gender="Bride", age=32, religion="Hindu",
                 caste="Reddy", current_location="Chennai", qualification="MBA",
                 occupation="Manager", food_preference="Non-Vegetarian",
                 horoscope_available=False),
-        Profile(full_name="Arjun Kumar", gender="Groom", age=29, religion="Hindu",
+        Profile(owner_user_id=OWNER, full_name="Arjun Kumar", gender="Groom", age=29, religion="Hindu",
                 caste="Brahmin", current_location="Bangalore", qualification="MBBS",
                 occupation="Doctor", food_preference="Vegetarian",
                 horoscope_available=True),
@@ -33,7 +36,7 @@ def _seed(session: Session):
 def test_mock_parse_gender_and_age():
     session = _memory_session()
     _seed(session)
-    filters = search._mock_parse_query(session, "brides below 30")
+    filters = search._mock_parse_query(session, OWNER, "brides below 30")
     assert filters["gender"] == "Bride"
     assert filters["max_age"] == 30
 
@@ -41,7 +44,7 @@ def test_mock_parse_gender_and_age():
 def test_mock_parse_matches_known_db_values():
     session = _memory_session()
     _seed(session)
-    filters = search._mock_parse_query(session, "Brahmin grooms in Bangalore")
+    filters = search._mock_parse_query(session, OWNER, "Brahmin grooms in Bangalore")
     assert filters["gender"] == "Groom"
     assert filters["caste"] == "Brahmin"
     assert filters["current_location"] == "Bangalore"
@@ -50,7 +53,7 @@ def test_mock_parse_matches_known_db_values():
 def test_mock_parse_horoscope_pending():
     session = _memory_session()
     _seed(session)
-    filters = search._mock_parse_query(session, "brides with pending horoscope")
+    filters = search._mock_parse_query(session, OWNER, "brides with pending horoscope")
     assert filters["gender"] == "Bride"
     assert filters["horoscope_available"] is False
 
@@ -58,14 +61,14 @@ def test_mock_parse_horoscope_pending():
 def test_mock_parse_food_preference():
     session = _memory_session()
     _seed(session)
-    filters = search._mock_parse_query(session, "vegetarian grooms")
+    filters = search._mock_parse_query(session, OWNER, "vegetarian grooms")
     assert filters["food_preference"] == "Vegetarian"
 
 
 def test_apply_filters_gender_and_caste():
     session = _memory_session()
     _seed(session)
-    results = search.apply_filters(session, {"gender": "Bride", "caste": "Brahmin"})
+    results = search.apply_filters(session, OWNER, {"gender": "Bride", "caste": "Brahmin"})
     assert len(results) == 1
     assert results[0].full_name == "Priya Sharma"
 
@@ -73,7 +76,7 @@ def test_apply_filters_gender_and_caste():
 def test_apply_filters_age_range():
     session = _memory_session()
     _seed(session)
-    results = search.apply_filters(session, {"gender": "Bride", "max_age": 28})
+    results = search.apply_filters(session, OWNER, {"gender": "Bride", "max_age": 28})
     assert len(results) == 1
     assert results[0].full_name == "Priya Sharma"
 
@@ -81,14 +84,14 @@ def test_apply_filters_age_range():
 def test_apply_filters_no_filters_returns_all():
     session = _memory_session()
     _seed(session)
-    results = search.apply_filters(session, {})
+    results = search.apply_filters(session, OWNER, {})
     assert len(results) == 3
 
 
 def test_apply_filters_horoscope_available():
     session = _memory_session()
     _seed(session)
-    results = search.apply_filters(session, {"horoscope_available": False})
+    results = search.apply_filters(session, OWNER, {"horoscope_available": False})
     assert len(results) == 1
     assert results[0].full_name == "Anjali Rao"
 
@@ -100,7 +103,7 @@ def test_describe_filters():
 
 
 def test_llm_parse_query_via_monkeypatch(monkeypatch):
-    def fake_complete_json(prompt, provider=None):
+    def fake_complete_json(prompt, provider=None, usage_out=None):
         return {"gender": "Bride", "caste": "Brahmin", "min_age": "25", "max_age": None,
                 "religion": None, "current_location": None, "country": None,
                 "qualification_contains": None, "occupation_contains": None,
@@ -109,7 +112,7 @@ def test_llm_parse_query_via_monkeypatch(monkeypatch):
 
     monkeypatch.setattr(llm, "complete_json", fake_complete_json)
     session = _memory_session()
-    filters = search.parse_query(session, "Brahmin brides above 25 with horoscope", provider="anthropic")
+    filters = search.parse_query(session, OWNER, "Brahmin brides above 25 with horoscope", provider="anthropic")
     assert filters["gender"] == "Bride"
     assert filters["min_age"] == 25
     assert filters["horoscope_available"] is True

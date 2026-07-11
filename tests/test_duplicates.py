@@ -12,6 +12,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 
+OWNER = 1
+
+
 def _memory_session() -> Session:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
@@ -27,11 +30,10 @@ def test_name_similarity_basic():
 
 def test_exact_phone_match_is_strong_duplicate():
     session = _memory_session()
-    session.add(Profile(full_name="Priya Sharma", gender="Bride", phone="9876543210"))
+    session.add(Profile(owner_user_id=OWNER, full_name="Priya Sharma", gender="Bride", phone="9876543210"))
     session.commit()
 
-    candidates = find_duplicate_candidates(
-        session, full_name="Priya S", gender="Bride", phone="+91 98765 43210",
+    candidates = find_duplicate_candidates(session, OWNER, full_name="Priya S", gender="Bride", phone="+91 98765 43210",
     )
     assert len(candidates) == 1
     assert candidates[0].score >= 60
@@ -40,11 +42,10 @@ def test_exact_phone_match_is_strong_duplicate():
 
 def test_dob_plus_similar_name_is_duplicate():
     session = _memory_session()
-    session.add(Profile(full_name="Priya Sharma", gender="Bride", dob=date(1998, 6, 15)))
+    session.add(Profile(owner_user_id=OWNER, full_name="Priya Sharma", gender="Bride", dob=date(1998, 6, 15)))
     session.commit()
 
-    candidates = find_duplicate_candidates(
-        session, full_name="Priya Sharmaa", gender="Bride", dob=date(1998, 6, 15),
+    candidates = find_duplicate_candidates(session, OWNER, full_name="Priya Sharmaa", gender="Bride", dob=date(1998, 6, 15),
     )
     assert len(candidates) == 1
     assert candidates[0].score >= 40
@@ -52,34 +53,31 @@ def test_dob_plus_similar_name_is_duplicate():
 
 def test_different_gender_not_flagged():
     session = _memory_session()
-    session.add(Profile(full_name="Priya Sharma", gender="Bride", phone="9876543210"))
+    session.add(Profile(owner_user_id=OWNER, full_name="Priya Sharma", gender="Bride", phone="9876543210"))
     session.commit()
 
-    candidates = find_duplicate_candidates(
-        session, full_name="Priya Sharma", gender="Groom", phone="9876543210",
+    candidates = find_duplicate_candidates(session, OWNER, full_name="Priya Sharma", gender="Groom", phone="9876543210",
     )
     assert candidates == []
 
 
 def test_no_overlap_no_duplicate():
     session = _memory_session()
-    session.add(Profile(full_name="Priya Sharma", gender="Bride", phone="9876543210"))
+    session.add(Profile(owner_user_id=OWNER, full_name="Priya Sharma", gender="Bride", phone="9876543210"))
     session.commit()
 
-    candidates = find_duplicate_candidates(
-        session, full_name="Anjali Rao", gender="Bride", phone="9111111111",
+    candidates = find_duplicate_candidates(session, OWNER, full_name="Anjali Rao", gender="Bride", phone="9111111111",
     )
     assert candidates == []
 
 
 def test_exclude_id_skips_self():
     session = _memory_session()
-    p = Profile(full_name="Priya Sharma", gender="Bride", phone="9876543210")
+    p = Profile(owner_user_id=OWNER, full_name="Priya Sharma", gender="Bride", phone="9876543210")
     session.add(p)
     session.commit()
 
-    candidates = find_duplicate_candidates(
-        session, full_name="Priya Sharma", gender="Bride", phone="9876543210",
+    candidates = find_duplicate_candidates(session, OWNER, full_name="Priya Sharma", gender="Bride", phone="9876543210",
         exclude_id=p.id,
     )
     assert candidates == []
@@ -87,28 +85,28 @@ def test_exclude_id_skips_self():
 
 def test_find_all_duplicate_pairs_finds_and_dedupes_pair():
     session = _memory_session()
-    session.add(Profile(full_name="Priya Sharma", gender="Bride", phone="9876543210"))
-    session.add(Profile(full_name="Priya Sharma", gender="Bride", phone="9876543210"))
-    session.add(Profile(full_name="Anjali Rao", gender="Bride", phone="9111111111"))
+    session.add(Profile(owner_user_id=OWNER, full_name="Priya Sharma", gender="Bride", phone="9876543210"))
+    session.add(Profile(owner_user_id=OWNER, full_name="Priya Sharma", gender="Bride", phone="9876543210"))
+    session.add(Profile(owner_user_id=OWNER, full_name="Anjali Rao", gender="Bride", phone="9111111111"))
     session.commit()
 
-    pairs = find_all_duplicate_pairs(session)
+    pairs = find_all_duplicate_pairs(session, OWNER)
     assert len(pairs) == 1  # not reported twice (once as A-B, once as B-A)
     assert pairs[0].score >= 60
 
 
 def test_find_all_duplicate_pairs_empty_when_no_overlap():
     session = _memory_session()
-    session.add(Profile(full_name="Priya Sharma", gender="Bride", phone="9876543210"))
-    session.add(Profile(full_name="Anjali Rao", gender="Bride", phone="9111111111"))
+    session.add(Profile(owner_user_id=OWNER, full_name="Priya Sharma", gender="Bride", phone="9876543210"))
+    session.add(Profile(owner_user_id=OWNER, full_name="Anjali Rao", gender="Bride", phone="9111111111"))
     session.commit()
 
-    assert find_all_duplicate_pairs(session) == []
+    assert find_all_duplicate_pairs(session, OWNER) == []
 
 
 def test_merge_into_profile_fills_gaps_without_overwriting():
     session = _memory_session()
-    target = Profile(full_name="Priya Sharma", gender="Bride", phone="9876543210")
+    target = Profile(owner_user_id=OWNER, full_name="Priya Sharma", gender="Bride", phone="9876543210")
     session.add(target)
     session.commit()
 
@@ -122,7 +120,7 @@ def test_merge_into_profile_fills_gaps_without_overwriting():
 
 def test_merge_into_profile_merges_expectations_dict_key_by_key():
     session = _memory_session()
-    target = Profile(full_name="Priya", gender="Bride", expectations={"age": "existing-pref"})
+    target = Profile(owner_user_id=OWNER, full_name="Priya", gender="Bride", expectations={"age": "existing-pref"})
     session.add(target)
     session.commit()
 
@@ -133,15 +131,15 @@ def test_merge_into_profile_merges_expectations_dict_key_by_key():
 
 def test_merge_profiles_moves_children_and_deletes_duplicate():
     session = _memory_session()
-    keep = Profile(full_name="Priya Sharma", gender="Bride", phone="9876543210")
-    remove = Profile(full_name="Priya Sharma", gender="Bride", caste="Brahmin")
+    keep = Profile(owner_user_id=OWNER, full_name="Priya Sharma", gender="Bride", phone="9876543210")
+    remove = Profile(owner_user_id=OWNER, full_name="Priya Sharma", gender="Bride", caste="Brahmin")
     session.add_all([keep, remove])
     session.commit()
 
     session.add(Document(profile_id=remove.id, kind="biodata", filename="bio.pdf", path="/tmp/bio.pdf"))
     session.add(Task(profile_id=remove.id, title="Call parents"))
     session.add(Activity(profile_id=remove.id, event="Profile Created"))
-    other = Profile(full_name="Ravi", gender="Groom")
+    other = Profile(owner_user_id=OWNER, full_name="Ravi", gender="Groom")
     session.add(other)
     session.commit()
     session.add(MatchResult(bride_id=remove.id, groom_id=other.id, practical_score=80))

@@ -10,25 +10,29 @@ from soulmatch.insights import stale_cases
 from soulmatch.models import PIPELINE_STAGE_GROUPS, Activity, MatchResult, Profile, RawMessage
 from soulmatch.nav import SEARCH_PAGE, TASKS_OVERDUE_PREF_KEY, TASKS_PAGE, open_profile_button
 from soulmatch.tasks import overdue_tasks, pending_tasks
+from soulmatch.tenancy import owned, owner_id_of
 
-auth.require_login()
+user = auth.require_login()
+owner = owner_id_of(user)
 theme.page_header("Dashboard", "Your entire practice at a glance — pipeline, follow-ups, and match activity.")
 
 with get_session() as session:
-    profiles = session.scalars(select(Profile)).all()
-    matches = session.scalars(select(MatchResult)).all()
+    profiles = session.scalars(owned(select(Profile), Profile, owner)).all()
+    matches = session.scalars(owned(select(MatchResult), MatchResult, owner)).all()
     recent_activity = session.scalars(
-        select(Activity).order_by(Activity.created_at.desc()).limit(15)
+        owned(select(Activity), Activity, owner).order_by(Activity.created_at.desc()).limit(15)
     ).all()
-    pending_task_count = len(pending_tasks(session))
-    overdue_task_count = len(overdue_tasks(session))
-    stale_case_count = len(stale_cases(session))
-    unprocessed_count = len(session.scalars(select(RawMessage).where(RawMessage.processed.is_(False))).all())
+    pending_task_count = len(pending_tasks(session, owner))
+    overdue_task_count = len(overdue_tasks(session, owner))
+    stale_case_count = len(stale_cases(session, owner))
+    unprocessed_count = len(session.scalars(
+        owned(select(RawMessage).where(RawMessage.processed.is_(False)), RawMessage, owner)
+    ).all())
 
     profile_ids = {a.profile_id for a in recent_activity}
     activity_profile_names = {
         p.id: p.full_name
-        for p in session.scalars(select(Profile).where(Profile.id.in_(profile_ids))).all()
+        for p in session.scalars(owned(select(Profile).where(Profile.id.in_(profile_ids)), Profile, owner)).all()
     }
 
 total = len(profiles)

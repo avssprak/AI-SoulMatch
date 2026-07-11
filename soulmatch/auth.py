@@ -23,6 +23,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import time
 
 import streamlit as st
@@ -33,8 +34,10 @@ from . import config
 from .models import ROLES, EDITOR_ROLES, User, utcnow
 
 _PBKDF2_ITERATIONS = 260_000
-ADMIN_ROLE = "Administrator"
+ADMIN_ROLE = "Admin"
+MEMBER_ROLE = "Member"
 SESSION_TOKEN_TTL_SECONDS = 7 * 24 * 3600
+MIN_PASSWORD_LENGTH = 8
 
 
 def hash_password(password: str, salt: bytes | None = None) -> str:
@@ -52,17 +55,40 @@ def verify_password(password: str, stored: str) -> bool:
     return hash_password(password, salt) == stored
 
 
-def create_user(session: Session, username: str, password: str, full_name: str | None, role: str) -> User:
+def create_user(
+    session: Session, username: str, password: str, full_name: str | None, role: str,
+    email: str | None = None,
+) -> User:
     if role not in ROLES:
         raise ValueError(f"Unknown role: {role}")
     user = User(
         username=username.strip().lower(),
+        email=(email or None) and email.strip().lower(),
         password_hash=hash_password(password),
         full_name=full_name or None,
         role=role,
     )
     session.add(user)
     session.flush()
+    return user
+
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def register_member(session: Session, email: str, password: str, full_name: str | None) -> User:
+    """Self-service signup (V3-1-4): new accounts are Members on the free
+    plan, and email doubles as the username. Raises ValueError with a
+    user-displayable message on any problem."""
+    email = email.strip().lower()
+    if not _EMAIL_RE.match(email):
+        raise ValueError("Please enter a valid email address.")
+    if len(password) < MIN_PASSWORD_LENGTH:
+        raise ValueError(f"Password must be at least {MIN_PASSWORD_LENGTH} characters.")
+    if session.scalar(select(User).where(User.username == email)) is not None:
+        raise ValueError("An account with this email already exists. Try signing in.")
+    user = create_user(session, email, password, full_name, MEMBER_ROLE, email=email)
+    session.commit()
     return user
 
 
@@ -146,7 +172,7 @@ def ensure_bootstrap_admin(session: Session) -> None:
         return
     create_user(
         session, config.BOOTSTRAP_ADMIN_USERNAME, config.BOOTSTRAP_ADMIN_PASSWORD,
-        "Administrator", ADMIN_ROLE,
+        "Platform Admin", ADMIN_ROLE,
     )
     session.commit()
 

@@ -10,14 +10,16 @@ from soulmatch.astrology.ephemeris import RASHIS
 from soulmatch.astrology.geo import lookup as geo_lookup
 from soulmatch.db import get_session
 from soulmatch.models import Activity, Profile
+from soulmatch.tenancy import get_owned, owned, owner_id_of
 from soulmatch.ui import flash, show_flash
 
 current_user = auth.require_login()
+owner = owner_id_of(current_user)
 theme.page_header("Horoscope Check", "Standalone chart lookup (Lahiri sidereal) — verify a horoscope without running a full match.")
 show_flash()
 
 with get_session() as session:
-    profiles = session.scalars(select(Profile).order_by(Profile.full_name)).all()
+    profiles = session.scalars(owned(select(Profile), Profile, owner).order_by(Profile.full_name)).all()
 
 MANUAL_ENTRY = "— Manual entry —"
 selected = st.selectbox(
@@ -94,7 +96,7 @@ if chart_state and chart_state["dob"] == dob and chart_state["birth_time"] == bi
     if chart_state["profile_id"] is not None:
         profile_id = chart_state["profile_id"]
         with get_session() as session:
-            target_profile = session.get(Profile, profile_id)
+            target_profile = get_owned(session, Profile, profile_id, owner)
         existing_fields = [f for f in ("nakshatra", "rashi", "lagna") if getattr(target_profile, f)]
         overwrite = False
         if existing_fields:
@@ -103,7 +105,7 @@ if chart_state and chart_state["dob"] == dob and chart_state["birth_time"] == bi
             )
         if st.button(f"Save to profile #{profile_id}", key=f"astro_save_{profile_id}", type="primary"):
             with get_session() as session:
-                target_profile = session.get(Profile, profile_id)
+                target_profile = get_owned(session, Profile, profile_id, owner)
                 changed = []
                 for field in ("nakshatra", "rashi", "lagna"):
                     value = summary[field]
@@ -115,7 +117,7 @@ if chart_state and chart_state["dob"] == dob and chart_state["birth_time"] == bi
                     target_profile.horoscope_available = True
                     changed.append("horoscope_available")
                 session.add(Activity(
-                    profile_id=target_profile.id, event="Astrology computed",
+                    profile_id=target_profile.id, owner_user_id=owner, event="Astrology computed",
                     detail=f"Nakshatra {summary['nakshatra']}, Rashi {summary['rashi']}, Lagna {summary['lagna']}",
                     created_by_user_id=current_user["id"],
                 ))

@@ -32,18 +32,18 @@ def test_verify_password_rejects_malformed_hash():
 
 def test_create_user_and_authenticate():
     session = _memory_session()
-    auth.create_user(session, "Volunteer1", "secretpass1", "Test Volunteer", "Volunteer")
+    auth.create_user(session, "member1", "secretpass1", "Test Member", "Member")
     session.commit()
 
-    user = auth.authenticate(session, "volunteer1", "secretpass1")  # case-insensitive username
+    user = auth.authenticate(session, "member1", "secretpass1")  # case-insensitive username
     assert user is not None
-    assert user.role == "Volunteer"
+    assert user.role == "Member"
     assert user.last_login is not None
 
 
 def test_authenticate_wrong_password_fails():
     session = _memory_session()
-    auth.create_user(session, "user1", "correctpass", None, "Volunteer")
+    auth.create_user(session, "user1", "correctpass", None, "Member")
     session.commit()
 
     assert auth.authenticate(session, "user1", "wrongpass") is None
@@ -56,7 +56,7 @@ def test_authenticate_unknown_username_fails():
 
 def test_authenticate_inactive_user_fails():
     session = _memory_session()
-    user = auth.create_user(session, "user1", "correctpass", None, "Volunteer")
+    user = auth.create_user(session, "user1", "correctpass", None, "Member")
     session.commit()
     user.is_active = False
     session.commit()
@@ -72,7 +72,7 @@ def test_create_user_rejects_unknown_role():
 
 def test_change_password():
     session = _memory_session()
-    user = auth.create_user(session, "user1", "oldpass123", None, "Volunteer")
+    user = auth.create_user(session, "user1", "oldpass123", None, "Member")
     session.commit()
 
     auth.change_password(session, user, "newpass456")
@@ -96,7 +96,7 @@ def test_ensure_bootstrap_admin_creates_once():
 
 def test_session_token_roundtrip():
     session = _memory_session()
-    user = auth.create_user(session, "user1", "correctpass", None, "Volunteer")
+    user = auth.create_user(session, "user1", "correctpass", None, "Member")
     session.commit()
 
     token = auth.mint_session_token(user)
@@ -107,7 +107,7 @@ def test_session_token_roundtrip():
 
 def test_session_token_rejects_tampered_signature():
     session = _memory_session()
-    user = auth.create_user(session, "user1", "correctpass", None, "Volunteer")
+    user = auth.create_user(session, "user1", "correctpass", None, "Member")
     session.commit()
 
     token = auth.mint_session_token(user)
@@ -124,7 +124,7 @@ def test_session_token_rejects_malformed_token():
 
 def test_session_token_expires():
     session = _memory_session()
-    user = auth.create_user(session, "user1", "correctpass", None, "Volunteer")
+    user = auth.create_user(session, "user1", "correctpass", None, "Member")
     session.commit()
 
     token = auth.mint_session_token(user, ttl_seconds=-1)  # already expired
@@ -133,7 +133,7 @@ def test_session_token_expires():
 
 def test_session_token_invalidated_by_password_change():
     session = _memory_session()
-    user = auth.create_user(session, "user1", "oldpass123", None, "Volunteer")
+    user = auth.create_user(session, "user1", "oldpass123", None, "Member")
     session.commit()
 
     token = auth.mint_session_token(user)
@@ -145,7 +145,7 @@ def test_session_token_invalidated_by_password_change():
 
 def test_session_token_invalidated_by_logout_everywhere():
     session = _memory_session()
-    user = auth.create_user(session, "user1", "correctpass", None, "Volunteer")
+    user = auth.create_user(session, "user1", "correctpass", None, "Member")
     session.commit()
 
     token = auth.mint_session_token(user)
@@ -161,7 +161,7 @@ def test_session_token_invalidated_by_logout_everywhere():
 
 def test_session_token_invalidated_by_deactivation():
     session = _memory_session()
-    user = auth.create_user(session, "user1", "correctpass", None, "Volunteer")
+    user = auth.create_user(session, "user1", "correctpass", None, "Member")
     session.commit()
 
     token = auth.mint_session_token(user)
@@ -171,11 +171,23 @@ def test_session_token_invalidated_by_deactivation():
 
 
 def test_can_edit_and_is_admin():
-    assert auth.can_edit("Administrator")
-    assert auth.can_edit("Volunteer")
-    assert auth.can_edit("Coordinator")
-    assert not auth.can_edit("Viewer")
+    assert auth.can_edit("Admin")
+    assert auth.can_edit("Member")
 
-    assert auth.is_admin("Administrator")
-    assert not auth.is_admin("Volunteer")
-    assert not auth.is_admin("Viewer")
+    assert auth.is_admin("Admin")
+    assert not auth.is_admin("Member")
+
+
+def test_register_member():
+    session = _memory_session()
+    user = auth.register_member(session, "Parent@Example.com", "longenough1", "A Parent")
+    assert user.role == "Member" and user.plan == "free"
+    assert user.username == "parent@example.com" == user.email
+    # duplicate email rejected
+    import pytest as _pytest
+    with _pytest.raises(ValueError):
+        auth.register_member(session, "parent@example.com", "longenough1", None)
+    with _pytest.raises(ValueError):
+        auth.register_member(session, "not-an-email", "longenough1", None)
+    with _pytest.raises(ValueError):
+        auth.register_member(session, "new@example.com", "short", None)

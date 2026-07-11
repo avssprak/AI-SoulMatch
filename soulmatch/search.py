@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from . import config
 from .extraction import llm
 from .models import PIPELINE_STAGES, Profile
+from .tenancy import owned
 
 SEARCH_FIELDS = {
     "gender": '"Bride" or "Groom" or null',
@@ -56,12 +57,15 @@ Query: "{query}"
 Respond with ONLY the JSON object."""
 
 
-def parse_query(session: Session, text: str, provider: str | None = None) -> dict:
+def parse_query(
+    session: Session, owner_id: int, text: str, provider: str | None = None,
+    usage_out: dict | None = None,
+) -> dict:
     provider = (provider or config.LLM_PROVIDER).lower()
     if provider == "mock":
-        return _mock_parse_query(session, text)
+        return _mock_parse_query(session, owner_id, text)
     prompt = _PROMPT_TEMPLATE.format(schema=json.dumps(SEARCH_FIELDS, indent=2), query=text.strip()[:500])
-    raw = llm.complete_json(prompt, provider=provider)
+    raw = llm.complete_json(prompt, provider=provider, usage_out=usage_out)
     return _clean(raw)
 
 
@@ -84,8 +88,8 @@ def _clean(data: dict) -> dict:
     return out
 
 
-def apply_filters(session: Session, filters: dict) -> list[Profile]:
-    query = select(Profile)
+def apply_filters(session: Session, owner_id: int, filters: dict) -> list[Profile]:
+    query = owned(select(Profile), Profile, owner_id)
     if filters.get("gender") in ("Bride", "Groom"):
         query = query.where(Profile.gender == filters["gender"])
     for key, column in _ILIKE_FIELDS.items():
@@ -118,7 +122,7 @@ _MIN_AGE_RE = re.compile(r"(?:above|over|older than|more than|min(?:imum)?)\s+(\
 _EXACT_AGE_RE = re.compile(r"\bage[d]?\s+(\d{2})\b")
 
 
-def _mock_parse_query(session: Session, text: str) -> dict:
+def _mock_parse_query(session: Session, owner_id: int, text: str) -> dict:
     filters: dict = {k: None for k in SEARCH_FIELDS}
     lower = text.lower()
 
@@ -158,7 +162,11 @@ def _mock_parse_query(session: Session, text: str) -> dict:
             break
 
     for key, column in _ILIKE_FIELDS.items():
-        values = session.scalars(select(column).distinct().where(column.is_not(None))).all()
+        # distinct values are matched from the OWNER's data only — matching
+        # against other tenants' values would leak their vocabulary here.
+        values = session.scalars(
+            select(column).distinct().where(column.is_not(None), Profile.owner_user_id == owner_id)
+        ).all()
         for v in values:
             if v and v.lower() in lower:
                 filters[key] = v

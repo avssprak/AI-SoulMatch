@@ -1,78 +1,69 @@
+"""Admin-only operator surface (V3-1-5): customer list and account controls.
+
+This page never touches another tenant's domain rows — only the users table
+plus per-tenant row counts for support context.
+"""
+
 import pandas as pd
 import streamlit as st
-from sqlalchemy import select
+from sqlalchemy import func, select
 
-from soulmatch import auth, theme
+from soulmatch import auth, billing, theme
 from soulmatch.db import get_session
-from soulmatch.models import ROLES, User
+from soulmatch.models import PLANS, Profile, User
 from soulmatch.ui import flash, show_flash
 
 current_user = auth.require_admin()
 
 theme.page_header(
-    "User Management",
-    "Administrator only. Roles: Administrator (full access + user management), "
-    "Volunteer / Coordinator (create/edit everything), Viewer (read-only).",
+    "Customers",
+    "Platform operator view — every account, its plan, and account controls. "
+    "Customer data itself stays private to each member.",
 )
 show_flash()
 
 with get_session() as session:
-    users = session.scalars(select(User).order_by(User.username)).all()
+    users = session.scalars(select(User).order_by(User.created_at.desc())).all()
+    profile_counts = dict(
+        session.execute(
+            select(Profile.owner_user_id, func.count(Profile.id)).group_by(Profile.owner_user_id)
+        ).all()
+    )
+
+member_count = sum(1 for u in users if u.role == auth.MEMBER_ROLE)
+c1, c2, c3 = st.columns(3)
+c1.metric("Members", member_count)
+c2.metric("On paid plans", sum(1 for u in users if u.plan in ("plus", "pro")))
+c3.metric("Active accounts", sum(1 for u in users if u.is_active))
 
 rows = [{
-    "ID": u.id, "Username": u.username, "Full Name": u.full_name or "—", "Role": u.role,
+    "ID": u.id, "Email / Username": u.email or u.username, "Name": u.full_name or "—",
+    "Role": u.role, "Plan": u.plan, "Profiles": profile_counts.get(u.id, 0),
     "Active": "Yes" if u.is_active else "No",
+    "Joined": u.created_at.strftime("%d %b %Y") if u.created_at else "—",
     "Last Login": u.last_login.strftime("%d %b %Y %H:%M") if u.last_login else "Never",
 } for u in users]
 st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
 st.divider()
-theme.section("Create User")
-with st.form("create_user", clear_on_submit=True):
-    c1, c2 = st.columns(2)
-    new_username = c1.text_input("Username*")
-    new_full_name = c2.text_input("Full Name")
-    c1, c2, c3 = st.columns(3)
-    new_password = c1.text_input("Password*", type="password")
-    confirm_password = c2.text_input("Confirm Password*", type="password")
-    new_role = c3.selectbox("Role", ROLES, index=ROLES.index("Volunteer"))
-    if st.form_submit_button("Create user", type="primary"):
-        if not new_username or not new_password:
-            st.error("Username and password are required.")
-        elif new_password != confirm_password:
-            st.error("Passwords do not match.")
-        elif len(new_password) < 6:
-            st.error("Password must be at least 6 characters.")
-        else:
-            with get_session() as session:
-                existing = session.scalar(select(User).where(User.username == new_username.strip().lower()))
-                if existing:
-                    st.error(f"Username '{new_username}' is already taken.")
-                else:
-                    auth.create_user(session, new_username, new_password, new_full_name, new_role)
-                    session.commit()
-                    flash(f"User '{new_username}' created.")
-                    st.rerun()
-
-st.divider()
-theme.section("Manage User")
+theme.section("Manage account")
 if users:
     selected_id = st.selectbox(
-        "Select user", [u.id for u in users],
-        format_func=lambda uid: next(f"{u.username} ({u.role})" for u in users if u.id == uid),
+        "Select account", [u.id for u in users],
+        format_func=lambda uid: next(f"{u.email or u.username} ({u.role}, {u.plan})" for u in users if u.id == uid),
     )
     with get_session() as session:
         target = session.get(User, selected_id)
 
         col1, col2, col3 = st.columns(3)
         with col1:
-            new_role_choice = st.selectbox(
-                "Role", ROLES, index=ROLES.index(target.role), key=f"role_{target.id}"
-            )
-            if new_role_choice != target.role and st.button("Update role"):
-                target.role = new_role_choice
+            # Manual plan override — support/comp tool until billing (V3-3)
+            # sets this automatically via payment webhooks.
+            new_plan = st.selectbox("Plan", PLANS, index=PLANS.index(target.plan), key=f"plan_{target.id}")
+            if new_plan != target.plan and st.button("Update plan"):
+                target.plan = new_plan
                 session.commit()
-                flash("Role updated.")
+                flash(f"'{target.username}' moved to {new_plan}.")
                 st.rerun()
         with col2:
             if target.id == current_user["id"]:
@@ -93,10 +84,30 @@ if users:
             with st.popover("Reset password"):
                 reset_pw = st.text_input("New password", type="password", key=f"reset_{target.id}")
                 if st.button("Set password", key=f"reset_btn_{target.id}"):
-                    if len(reset_pw) < 6:
-                        st.error("Password must be at least 6 characters.")
+                    if len(reset_pw) < auth.MIN_PASSWORD_LENGTH:
+                        st.error(f"Password must be at least {auth.MIN_PASSWORD_LENGTH} characters.")
                     else:
                         auth.change_password(session, target, reset_pw)
                         st.success("Password reset.")
 else:
-    st.info("No users yet.")
+    st.info("No accounts yet.")
+
+st.divider()
+theme.section("AI usage this month", "Platform-wide, across every tenant.")
+with get_session() as session:
+    summary = billing.monthly_usage_summary(session)
+u1, u2 = st.columns(2)
+u1.metric("Estimated API cost", f"₹{summary['total_cost_inr']:.2f}")
+with u2:
+    st.markdown("**Actions by type**")
+    if summary["by_action"]:
+        st.dataframe(pd.DataFrame(
+            [{"Action": k, "Count": v} for k, v in summary["by_action"].items()]
+        ), width="stretch", hide_index=True)
+    else:
+        st.caption("No metered AI actions recorded yet this month.")
+st.markdown("**Top 5 heaviest users (by estimated cost)**")
+if summary["top_users"]:
+    st.dataframe(pd.DataFrame(summary["top_users"]), width="stretch", hide_index=True)
+else:
+    st.caption("No usage yet.")
