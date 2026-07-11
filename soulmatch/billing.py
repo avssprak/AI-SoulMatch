@@ -17,6 +17,8 @@ from . import config
 from .models import AiUsage, Profile, User
 from .tenancy import owned
 
+GRACE_DAYS = 7
+
 # None = unlimited. Keep this the only place plan differences are encoded —
 # every gate in the app reads from here rather than branching on plan name.
 PLAN_LIMITS = {
@@ -175,3 +177,101 @@ def monthly_usage_summary(session: Session, *, today: date | None = None) -> dic
     } if owner_ids else {}
     top_users = [{"user": names.get(oid, f"#{oid}"), "cost_inr": cost} for oid, cost in top_rows]
     return {"total_cost_inr": total_cost, "by_action": by_action, "top_users": top_users}
+
+
+# --- V3-3: price catalog, checkout, and plan lifecycle ----------------------
+#
+# PRICE_CATALOG is the single source of truth for (plan, interval, currency)
+# -> amount + which gateway/price-id to use. My Plan and soulmatch.payments
+# both read from here so the checkout amount can never drift from what's
+# advertised, and adding a new interval/currency means editing this table
+# only.
+
+class PaymentConfigError(Exception):
+    """Raised when a checkout is attempted before the relevant gateway's
+    account/price ids are configured in .env — message is support-ready."""
+
+
+def _catalog() -> dict[tuple[str, str, str], dict]:
+    catalog: dict[tuple[str, str, str], dict] = {}
+    for plan in ("plus", "pro"):
+        catalog[(plan, "monthly", "INR")] = {
+            "amount": PLAN_PRICES_INR[plan], "provider": "razorpay",
+            "provider_price_id": getattr(config, f"RAZORPAY_PLAN_{plan.upper()}_MONTHLY"),
+        }
+        catalog[(plan, "annual", "INR")] = {
+            "amount": PLAN_PRICES_INR_ANNUAL[plan], "provider": "razorpay",
+            "provider_price_id": getattr(config, f"RAZORPAY_PLAN_{plan.upper()}_ANNUAL"),
+        }
+        catalog[(plan, "monthly", "USD")] = {
+            "amount": PLAN_PRICES_USD[plan], "provider": "stripe",
+            "provider_price_id": getattr(config, f"STRIPE_PRICE_{plan.upper()}_MONTHLY"),
+        }
+        catalog[(plan, "annual", "USD")] = {
+            "amount": PLAN_PRICES_USD_ANNUAL[plan], "provider": "stripe",
+            "provider_price_id": getattr(config, f"STRIPE_PRICE_{plan.upper()}_ANNUAL"),
+        }
+    return catalog
+
+
+PRICE_CATALOG = _catalog()
+
+
+def price_entry(plan: str, interval: str, currency: str) -> dict:
+    try:
+        return PRICE_CATALOG[(plan, interval, currency)]
+    except KeyError as e:
+        raise PaymentConfigError(f"No price configured for {plan}/{interval}/{currency}.") from e
+
+
+def plan_interval_for_provider_price_id(provider_price_id: str) -> tuple[str, str] | None:
+    """Reverse lookup used by webhook handlers: a gateway plan/price id ->
+    our (plan, interval), so we don't have to trust the webhook payload's
+    own idea of plan naming."""
+    for (plan, interval, _currency), entry in PRICE_CATALOG.items():
+        if entry["provider_price_id"] and entry["provider_price_id"] == provider_price_id:
+            return plan, interval
+    return None
+
+
+def effective_plan(user: User) -> str:
+    """The plan to enforce gates against. A paused subscription gates as
+    free WITHOUT overwriting user.plan, so Resume can restore the same tier
+    (see V3-3-4). Everything else (active/past_due/free) uses the stored
+    plan as-is — past_due still has full access during its grace window."""
+    if user.plan_status == "paused":
+        return "free"
+    return user.plan
+
+
+def sync_plan_status(session: Session, user: User) -> None:
+    """Lazily downgrade a past_due account whose grace window has expired.
+    Call once per login/token-restore (see app.py) — there is no cron in
+    this deployment, so expiry is only ever discovered when the user (or an
+    Admin looking them up) causes a page load."""
+    if (
+        user.plan_status == "past_due"
+        and user.plan_grace_until is not None
+        and datetime.now(timezone.utc).replace(tzinfo=None) > user.plan_grace_until
+    ):
+        user.plan = "free"
+        user.plan_status = "free"
+        user.plan_grace_until = None
+        session.commit()
+
+
+def pause_subscription(session: Session, user: User) -> None:
+    """V3-3-4 Pause: gates as free immediately (plan value is preserved for
+    Resume). Cancelling the gateway subscription itself is the caller's
+    job (soulmatch.payments) — this only flips the local flag."""
+    user.plan_status = "paused"
+    session.commit()
+
+
+def resume_subscription(session: Session, user: User) -> None:
+    """V3-3-4 Resume: clears the pause flag. Actually reactivating billing
+    (a new checkout) is a separate step the My Plan page walks the user
+    through — this alone does not create a new gateway subscription."""
+    if user.plan_status == "paused":
+        user.plan_status = "active" if user.plan != "free" else "free"
+        session.commit()

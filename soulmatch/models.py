@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 
-from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -76,6 +76,12 @@ ROLES = ["Member", "Admin"]
 EDITOR_ROLES = {"Member", "Admin"}
 
 PLANS = ["free", "plus", "pro"]
+BILLING_INTERVALS = ["monthly", "annual"]
+CURRENCIES = ["INR", "USD"]
+# 'active' = paid & in good standing; 'past_due' = payment failed, in the
+# V3-3-4 grace window; 'paused' = user-initiated pause (gates as free without
+# losing the stored plan); 'free' = no subscription (default).
+PLAN_STATUSES = ["active", "past_due", "paused", "free"]
 
 
 class User(Base):
@@ -90,6 +96,11 @@ class User(Base):
     full_name: Mapped[str | None] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(30), default="Member")
     plan: Mapped[str] = mapped_column(String(20), default="free")
+    # V3-3-4 lifecycle: plan_status tracks subscription health separately from
+    # `plan` itself, so a paused/past_due account can gate as free without
+    # losing the tier to restore on resume/payment recovery.
+    plan_status: Mapped[str] = mapped_column(String(20), default="free")
+    plan_grace_until: Mapped[datetime | None] = mapped_column(DateTime)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_login: Mapped[datetime | None] = mapped_column(DateTime)
@@ -112,6 +123,41 @@ class AiUsage(Base):
     tokens_out: Mapped[int] = mapped_column(Integer, default=0)
     cost_estimate_inr: Mapped[float] = mapped_column(Float, default=0.0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class Subscription(Base):
+    """One row per gateway subscription (V3-3). Created/updated only by
+    webhook handlers (soulmatch/payments.py) — never written directly from
+    a page, since the gateway is the source of truth for subscription state."""
+
+    __tablename__ = "subscriptions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    provider: Mapped[str] = mapped_column(String(20))  # "razorpay" | "stripe"
+    provider_sub_id: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    plan: Mapped[str | None] = mapped_column(String(20))
+    interval: Mapped[str | None] = mapped_column(String(20))  # "monthly" | "annual"
+    status: Mapped[str] = mapped_column(String(20), default="created")
+    current_period_end: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class WebhookEvent(Base):
+    """Idempotency guard (V3-3-2/3-3-3): one row per (provider, event_id)
+    ever processed. A webhook whose (provider, event_id) is already here is
+    a duplicate delivery and must be skipped, not re-applied. Uniqueness is
+    scoped to the pair, not event_id alone — two different gateways could
+    in principle mint the same id string."""
+
+    __tablename__ = "webhook_events"
+    __table_args__ = (UniqueConstraint("provider", "event_id", name="uq_webhook_events_provider_event_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider: Mapped[str] = mapped_column(String(20))
+    event_id: Mapped[str] = mapped_column(String(255), index=True)
+    received_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class RawMessage(Base):

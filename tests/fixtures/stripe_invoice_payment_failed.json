@@ -1,0 +1,18 @@
+{
+  "id": "evt_test_002",
+  "type": "invoice.payment_failed",
+  "data": {
+    "object": {
+      "id": "in_test_001",
+      "object": "invoice",
+      "subscription": "sub_stripe_test_001",
+      "subscription_details": {
+        "metadata": {
+          "owner_user_id": "1",
+          "plan": "plus",
+          "interval": "monthly"
+        }
+      }
+    }
+  }
+}

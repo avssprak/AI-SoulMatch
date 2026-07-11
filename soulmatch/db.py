@@ -31,6 +31,9 @@ _COLUMN_MIGRATIONS = [
     ("match_results", "owner_user_id", "INTEGER"),
     ("activities", "owner_user_id", "INTEGER"),
     ("tasks", "owner_user_id", "INTEGER"),
+    # V3-3 billing lifecycle (see V3_PLAN.md Sprint V3-3)
+    ("users", "plan_status", "VARCHAR(20) DEFAULT 'free'"),
+    ("users", "plan_grace_until", "DATETIME"),
 ]
 
 _TENANT_TABLES = ["raw_messages", "profiles", "documents", "match_results", "activities", "tasks"]

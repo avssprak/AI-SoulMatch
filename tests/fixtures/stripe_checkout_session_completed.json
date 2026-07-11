@@ -1,0 +1,17 @@
+{
+  "id": "evt_test_001",
+  "type": "checkout.session.completed",
+  "data": {
+    "object": {
+      "id": "cs_test_001",
+      "object": "checkout.session",
+      "client_reference_id": "1",
+      "subscription": "sub_stripe_test_001",
+      "metadata": {
+        "owner_user_id": "1",
+        "plan": "plus",
+        "interval": "monthly"
+      }
+    }
+  }
+}

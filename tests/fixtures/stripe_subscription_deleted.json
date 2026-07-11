@@ -1,0 +1,15 @@
+{
+  "id": "evt_test_003",
+  "type": "customer.subscription.deleted",
+  "data": {
+    "object": {
+      "id": "sub_stripe_test_001",
+      "object": "subscription",
+      "metadata": {
+        "owner_user_id": "1",
+        "plan": "plus",
+        "interval": "monthly"
+      }
+    }
+  }
+}

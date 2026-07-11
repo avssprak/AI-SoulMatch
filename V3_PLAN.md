@@ -95,6 +95,16 @@ V3-1 shipped on 2026-07-12. What a fresh session must know before touching code:
   the (currently `disabled=True`) upgrade buttons on My Plan to it, and
   extend `billing.py` with `PRICE_CATALOG` — don't create a second limits
   source.
+- **V3-3 shipped (2026-07-12):** `soulmatch/payments.py` (checkout links,
+  webhook signature verification + pure `apply_*_event` handlers) and
+  `webhook_server.py` (stdlib HTTP sidecar, port 8502 by default — run
+  alongside Streamlit, see `run_local.ps1`) both exist. `users.plan_status`
+  / `users.plan_grace_until` drive the active/past_due/paused/free
+  lifecycle via `billing.effective_plan`/`sync_plan_status`/
+  `pause_subscription`/`resume_subscription`. `Subscription` and
+  `WebhookEvent` models exist. Gateways are NOT yet connected to real
+  accounts — see the `[HUMAN]` note under V3-3's own heading before
+  assuming checkout works.
 
 **Verification recipe for every V3 task** (extends SPRINT_PLAN.md's):
 1. `.venv/Scripts/python.exe -m pytest -q` — all pass (126+ at V3-2 handoff).
@@ -122,7 +132,7 @@ then list the exact `[HUMAN]` steps left in your final report.
 ## Part 2 — Sprints
 
 Execute strictly in order — each sprint builds on the previous one's schema
-and helpers. **Next up: V3-3.** Work task-by-task, verify per Part 1.5 after
+and helpers. **Next up: V3-4.** Work task-by-task, verify per Part 1.5 after
 each task, and end every session by updating the sprint's status line here
 (✅ DONE date, or a "partially done: …" note listing exactly what remains).
 
@@ -224,7 +234,32 @@ PLAN_LIMITS = {
   shows, no LLM call), as a plus Member with mock provider (explanations
   run), and drive a member to their profile cap via the manual-add flow.
 
-### Sprint V3-3 — Billing (Razorpay + Stripe)
+### Sprint V3-3 — Billing (Razorpay + Stripe) — ✅ DONE 2026-07-12
+
+**Implementation notes for V3-4+ sessions:** all code-side tasks (V3-3-1
+through V3-3-6) are complete and tested (147 tests, incl. 14 in
+`tests/test_payments.py` against fixture JSON in `tests/fixtures/`).
+`soulmatch/payments.py` holds checkout creation (`create_razorpay_
+subscription_checkout`, `create_stripe_checkout_session`), signature
+verification, idempotent webhook application (`apply_razorpay_event`,
+`apply_stripe_event`), and pause/resume support
+(`cancel_subscription_at_period_end`). `webhook_server.py` (repo root) is
+the stdlib-only HTTP sidecar — no new dependency added; verified live
+end-to-end (valid signature activates a plan, forged signature gets 400).
+`billing.py` gained `PRICE_CATALOG`, `effective_plan`/`sync_plan_status`
+(paused/past_due/grace lifecycle), `pause_subscription`/
+`resume_subscription`. `pages_/9_My_Plan.py` has real checkout buttons
+(currency + interval toggle) and a Pause button; `app.py` refreshes
+plan/lifecycle from the DB on every page load and shows a past_due/paused
+banner. **`[HUMAN]` — nothing works end-to-end until these are done:**
+create the Razorpay account + 4 recurring Plans + webhook (secret into
+`.env`), create the Stripe account + 4 recurring Prices + webhook (secret
+into `.env`), and point each gateway's webhook config at
+`https://soulmatch.redprana.com/webhooks/{razorpay,stripe}` once V3-4's
+Caddy proxy exists (locally: `http://<ngrok-or-similar>/webhooks/...` for
+testing against a public URL, since gateways can't reach `localhost`).
+Until those exist, every checkout button shows a support-ready error
+instead of a link — this is intentional, not a bug to fix.
 
 Architecture constraint to decide FIRST: Streamlit cannot receive payment
 webhooks (it serves a websocket app, not arbitrary HTTP routes). Ship a tiny

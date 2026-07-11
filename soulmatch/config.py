@@ -43,6 +43,30 @@ LOCAL_LLM_MODEL = os.getenv("LOCAL_LLM_MODEL", "google/gemma-3-1B-it-QAT")
 BOOTSTRAP_ADMIN_USERNAME = os.getenv("BOOTSTRAP_ADMIN_USERNAME", "admin")
 BOOTSTRAP_ADMIN_PASSWORD = os.getenv("BOOTSTRAP_ADMIN_PASSWORD", "changeme123")
 
+# --- Billing (V3-3): Razorpay (INR, UPI Autopay) + Stripe (USD, NRI) -------
+# All blank by default — soulmatch.payments raises a clear PaymentConfigError
+# pointed at support@redprana.com if a checkout is attempted before these are
+# set. [HUMAN] steps: create the Razorpay/Stripe accounts, create the four
+# recurring plans/prices in each dashboard, paste the ids below, and set the
+# webhook secrets from each dashboard's webhook-endpoint setup screen.
+APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:8501")
+WEBHOOK_SERVER_PORT = int(os.getenv("WEBHOOK_SERVER_PORT", "8502"))
+
+RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "")
+RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET", "")
+RAZORPAY_WEBHOOK_SECRET = os.getenv("RAZORPAY_WEBHOOK_SECRET", "")
+RAZORPAY_PLAN_PLUS_MONTHLY = os.getenv("RAZORPAY_PLAN_PLUS_MONTHLY", "")
+RAZORPAY_PLAN_PLUS_ANNUAL = os.getenv("RAZORPAY_PLAN_PLUS_ANNUAL", "")
+RAZORPAY_PLAN_PRO_MONTHLY = os.getenv("RAZORPAY_PLAN_PRO_MONTHLY", "")
+RAZORPAY_PLAN_PRO_ANNUAL = os.getenv("RAZORPAY_PLAN_PRO_ANNUAL", "")
+
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+STRIPE_PRICE_PLUS_MONTHLY = os.getenv("STRIPE_PRICE_PLUS_MONTHLY", "")
+STRIPE_PRICE_PLUS_ANNUAL = os.getenv("STRIPE_PRICE_PLUS_ANNUAL", "")
+STRIPE_PRICE_PRO_MONTHLY = os.getenv("STRIPE_PRICE_PRO_MONTHLY", "")
+STRIPE_PRICE_PRO_ANNUAL = os.getenv("STRIPE_PRICE_PRO_ANNUAL", "")
+
 
 def ensure_dirs() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)

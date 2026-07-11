@@ -2,7 +2,7 @@
 
 import streamlit as st
 
-from soulmatch import auth, landing, theme
+from soulmatch import auth, billing, landing, theme
 from soulmatch.db import get_session, init_db
 
 # White lockup: the authenticated sidebar is deep maroon (see theme.py), and
@@ -108,7 +108,27 @@ if auth.current_user() is None:
 
 current = auth.current_user()
 
+# V3-3-4: refresh plan/lifecycle state from the DB on every page load — a
+# webhook (payment failure, cancellation, ...) can change it mid-session,
+# and there's no cron to push that into session_state some other way.
+with get_session() as _session:
+    _user_row = _session.get(auth.User, current["id"])
+    billing.sync_plan_status(_session, _user_row)
+    current["plan"] = billing.effective_plan(_user_row)
+    current["actual_plan"] = _user_row.plan
+    current["plan_status"] = _user_row.plan_status
+    current["plan_grace_until"] = _user_row.plan_grace_until
+    st.session_state["user"] = current
+
 theme.apply()  # brand CSS for every authenticated page (pages run below via nav.run())
+
+if current["plan_status"] == "past_due" and current["plan_grace_until"]:
+    st.warning(
+        f"⚠️ Your last payment didn't go through — you still have full access until "
+        f"{current['plan_grace_until']:%d %b %Y}. Update your payment method on **My Plan**."
+    )
+elif current["plan_status"] == "paused":
+    st.info("Your subscription is paused — you're on the Free plan for now. Resume anytime on **My Plan**.")
 
 with st.sidebar:
     display_name = current["full_name"] or current["username"]

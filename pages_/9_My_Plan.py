@@ -1,17 +1,23 @@
-"""Module 15 — My Plan (V3-2-4): plan status, AI-action usage, and the
-plan-comparison table. Payments (upgrade/downgrade) arrive in Sprint V3-3 —
-until then the upgrade buttons are informational placeholders.
+"""Module 15/16 — My Plan: plan status, AI-action usage, the plan-comparison
+table (V3-2), and checkout/pause/resume (V3-3).
+
+Checkout only works once the relevant gateway is configured in .env (see
+.env.example — a [HUMAN] setup step); until then the buttons surface a
+support-ready PaymentConfigError instead of crashing.
 """
 
+import requests
 import streamlit as st
 
-from soulmatch import auth, billing, theme
+from soulmatch import auth, billing, config, payments, theme
 from soulmatch.db import get_session
 from soulmatch.tenancy import owner_id_of
 
 current_user = auth.require_login()
 owner = owner_id_of(current_user)
-plan = current_user.get("plan", "free")
+plan = current_user.get("plan", "free")  # effective plan (paused -> "free")
+actual_plan = current_user.get("actual_plan", plan)
+plan_status = current_user.get("plan_status", "free")
 
 theme.page_header("My Plan", "Your subscription, AI-action usage, and what each plan includes.")
 
@@ -21,6 +27,10 @@ with get_session() as session:
 c1, c2 = st.columns([1, 2])
 with c1:
     st.metric("Current plan", plan.capitalize())
+    if plan_status == "paused":
+        st.caption(f"Paused — your subscribed tier ({actual_plan.capitalize()}) resumes when you check out again.")
+    elif plan_status == "past_due":
+        st.caption("Payment failed — see the banner above.")
 with c2:
     limit_text = "Unlimited" if status.limit is None else str(status.limit)
     st.markdown(f"**AI actions used this month:** {status.used} / {limit_text}")
@@ -33,22 +43,43 @@ with c2:
             f"until {status.resets_on:%d %b} for the reset."
         )
 
+if actual_plan != "free" and plan_status == "active":
+    if st.button("Pause subscription", help="Stops billing at the end of your current period. "
+                                             "You'll gate as Free until you resume."):
+        with get_session() as session:
+            try:
+                payments.cancel_subscription_at_period_end(session, owner)
+                user_row = session.get(auth.User, owner)
+                billing.pause_subscription(session, user_row)
+            except (billing.PaymentConfigError, requests.RequestException) as e:
+                st.error(str(e))
+            else:
+                st.success("Subscription paused. Resume anytime below.")
+                st.rerun()
+
 st.divider()
-theme.section("Plans", "Prices shown in INR — see billing.PRICE_CATALOG for USD/NRI pricing (arrives in V3-3).")
+theme.section("Plans", "Pick a currency and billing interval, then upgrade below.")
+
+currency = st.radio(
+    "Currency", ["INR", "USD"], horizontal=True,
+    help="Choose USD if you're paying from outside India (NRI).",
+)
+interval = st.radio("Billing", ["monthly", "annual"], horizontal=True)
+price_table = billing.PLAN_PRICES_INR if currency == "INR" else billing.PLAN_PRICES_USD
+price_table_annual = billing.PLAN_PRICES_INR_ANNUAL if currency == "INR" else billing.PLAN_PRICES_USD_ANNUAL
+symbol = "₹" if currency == "INR" else "$"
+period_label = "/mo" if interval == "monthly" else "/yr"
 
 plan_cols = st.columns(3)
-plan_details = [
-    ("free", "Free", billing.PLAN_PRICES_INR["free"]),
-    ("plus", "Plus", billing.PLAN_PRICES_INR["plus"]),
-    ("pro", "Pro", billing.PLAN_PRICES_INR["pro"]),
-]
-for col, (plan_key, label, price) in zip(plan_cols, plan_details):
+plan_details = [("free", "Free"), ("plus", "Plus"), ("pro", "Pro")]
+for col, (plan_key, label) in zip(plan_cols, plan_details):
     limits = billing.limits_for(plan_key)
+    price = (price_table_annual if interval == "annual" else price_table)[plan_key]
     with col:
         with st.container(border=True):
-            is_current = plan_key == plan
+            is_current = plan_key == actual_plan
             st.markdown(f"### {label}" + (" ✅ current" if is_current else ""))
-            st.markdown(f"**₹{price}/mo**" if price else "**Free**")
+            st.markdown(f"**{symbol}{price}{period_label}**" if price else "**Free**")
             st.markdown(f"- {limits['ai_actions']} AI actions/mo")
             st.markdown(
                 "- " + ("Unlimited profiles" if limits["profiles"] is None else f"{limits['profiles']} profiles")
@@ -60,9 +91,39 @@ for col, (plan_key, label, price) in zip(plan_cols, plan_details):
             st.markdown(
                 "- " + ("Unlimited bulk imports" if bulk is None else f"{bulk} bulk import(s)/mo" if bulk else "No bulk import")
             )
-            if not is_current:
-                st.button(
-                    f"Upgrade to {label}" if price else f"Downgrade to {label}",
-                    key=f"upgrade_{plan_key}", disabled=True,
-                    help="Payments arrive in Sprint V3-3 — talk to support@redprana.com for now.",
-                )
+
+            checkout_key = f"_checkout_url_{plan_key}_{interval}_{currency}"
+            if plan_key == "free":
+                if is_current:
+                    st.caption("You're on Free.")
+            elif is_current and plan_status == "paused":
+                if st.button(f"Resume {label}", key=f"resume_{plan_key}", type="primary"):
+                    with get_session() as session:
+                        try:
+                            if currency == "INR":
+                                url = payments.create_razorpay_subscription_checkout(owner, plan_key, interval)
+                            else:
+                                url = payments.create_stripe_checkout_session(owner, plan_key, interval)
+                        except (billing.PaymentConfigError, requests.RequestException) as e:
+                            st.error(str(e))
+                        else:
+                            st.session_state[checkout_key] = url
+            elif not is_current:
+                if st.button(f"Upgrade to {label}" if price else f"Switch to {label}", key=f"upgrade_{plan_key}"):
+                    with get_session() as session:
+                        try:
+                            if currency == "INR":
+                                url = payments.create_razorpay_subscription_checkout(owner, plan_key, interval)
+                            else:
+                                url = payments.create_stripe_checkout_session(owner, plan_key, interval)
+                        except (billing.PaymentConfigError, requests.RequestException) as e:
+                            st.error(str(e))
+                        else:
+                            st.session_state[checkout_key] = url
+            if st.session_state.get(checkout_key):
+                st.link_button("Continue to checkout →", st.session_state[checkout_key], type="primary")
+
+st.caption(
+    "Payments are processed by Razorpay (India, UPI Autopay) or Stripe (international). "
+    "Questions? support@redprana.com."
+)

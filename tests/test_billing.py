@@ -1,4 +1,4 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -174,3 +174,79 @@ def test_monthly_usage_summary_is_owner_scoped_and_ranked():
     assert summary["by_action"]["extract"] == 2
     assert summary["top_users"][0]["user"] == "owner@example.com"
     assert summary["total_cost_inr"] > 0
+
+
+# --- V3-3 price catalog & lifecycle ------------------------------------------
+
+def test_price_catalog_has_all_plan_interval_currency_combos():
+    for plan in ("plus", "pro"):
+        for interval in ("monthly", "annual"):
+            for currency in ("INR", "USD"):
+                entry = billing.price_entry(plan, interval, currency)
+                assert entry["amount"] > 0
+                assert entry["provider"] in ("razorpay", "stripe")
+
+
+def test_price_entry_unknown_combo_raises():
+    import pytest
+    with pytest.raises(billing.PaymentConfigError):
+        billing.price_entry("free", "monthly", "INR")
+
+
+def test_effective_plan_paused_gates_as_free_without_losing_stored_plan():
+    user = User(id=99, username="x", password_hash="x", plan="pro", plan_status="paused")
+    assert billing.effective_plan(user) == "free"
+    assert user.plan == "pro"  # unchanged — Resume restores this
+
+
+def test_effective_plan_active_or_past_due_uses_stored_plan():
+    user = User(id=99, username="x", password_hash="x", plan="plus", plan_status="active")
+    assert billing.effective_plan(user) == "plus"
+    user.plan_status = "past_due"
+    assert billing.effective_plan(user) == "plus"  # full access during grace
+
+
+def test_sync_plan_status_downgrades_after_grace_expires():
+    session = _memory_session()
+    _seed_users(session)
+    user = session.get(User, OWNER)
+    user.plan = "plus"
+    user.plan_status = "past_due"
+    user.plan_grace_until = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=1)
+    session.commit()
+
+    billing.sync_plan_status(session, user)
+    assert user.plan == "free"
+    assert user.plan_status == "free"
+    assert user.plan_grace_until is None
+
+
+def test_sync_plan_status_leaves_active_grace_alone():
+    session = _memory_session()
+    _seed_users(session)
+    user = session.get(User, OWNER)
+    user.plan = "plus"
+    user.plan_status = "past_due"
+    user.plan_grace_until = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=3)
+    session.commit()
+
+    billing.sync_plan_status(session, user)
+    assert user.plan == "plus"
+    assert user.plan_status == "past_due"
+
+
+def test_pause_and_resume_subscription():
+    session = _memory_session()
+    _seed_users(session)
+    user = session.get(User, OWNER)
+    user.plan = "pro"
+    user.plan_status = "active"
+    session.commit()
+
+    billing.pause_subscription(session, user)
+    assert user.plan_status == "paused"
+    assert user.plan == "pro"  # preserved
+
+    billing.resume_subscription(session, user)
+    assert user.plan_status == "active"
+    assert user.plan == "pro"

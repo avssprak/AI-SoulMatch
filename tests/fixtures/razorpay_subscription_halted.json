@@ -1,0 +1,21 @@
+{
+  "entity": "event",
+  "account_id": "acc_test",
+  "event": "subscription.halted",
+  "contains": ["subscription"],
+  "payload": {
+    "subscription": {
+      "entity": {
+        "id": "sub_test_001",
+        "plan_id": "plan_plus_monthly_test",
+        "status": "halted",
+        "notes": {
+          "owner_user_id": "1",
+          "plan": "plus",
+          "interval": "monthly"
+        }
+      }
+    }
+  },
+  "created_at": 1751600000
+}
