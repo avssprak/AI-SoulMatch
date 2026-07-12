@@ -15,7 +15,7 @@ from soulmatch.timezones import to_local
 
 user = auth.require_login()
 owner = owner_id_of(user)
-theme.page_header("Dashboard", "Your entire practice at a glance — pipeline, follow-ups, and match activity.")
+theme.page_header("Dashboard", "Your child's search at a glance — proposals in play, follow-ups, and match activity.")
 
 with get_session() as session:
     profiles = session.scalars(owned(select(Profile), Profile, owner)).all()
@@ -162,7 +162,7 @@ else:
     col3, col4 = st.columns(2)
 
     with col3:
-        theme.section("Profiles Added Over Time", "Weekly intake — is the practice growing?")
+        theme.section("Profiles Added Over Time", "Weekly intake — how many new biodatas are coming in?")
         created = pd.DataFrame({"created": [p.created_at for p in profiles]})
         weekly = created.set_index("created").resample("W").size().rename("added").reset_index()
         fig = px.area(weekly, x="created", y="added")

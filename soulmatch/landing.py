@@ -371,12 +371,12 @@ div[class*="st-key-login_card"] h3 { font-family: 'Playfair Display', Georgia, s
 def _hero_html() -> str:
     return f"""
 <div class="sm-brand"><img class="sm-mark" src="/app/static/logo-white.svg" alt="SoulMatch"/>{_redprana_lockup_html(light=True)}</div>
-<div class="sm-eyebrow">AI-Powered Matrimonial Intelligence</div>
-<div class="sm-h1">Where tradition meets <em>intelligent</em> matchmaking.</div>
+<div class="sm-eyebrow">The Private CRM for Your Child's Marriage Search</div>
+<div class="sm-h1">Find your son or daughter's <em>soul match</em> — the organized way.</div>
 <div class="sm-hero-sub">
-  SoulMatch turns WhatsApp chats, PDFs, and biodata into structured profiles,
-  scores compatibility with configurable criteria and Vedic astrology, and tracks
-  every introduction from first contact to celebration.
+  SoulMatch helps parents manage their child's marriage search: the biodatas
+  arriving on WhatsApp become clean, comparable profiles — scored on practical
+  fit and Vedic compatibility, and tracked from first phone call to wedding day.
 </div>
 <div class="sm-privacy-strip">🔒 Your data is yours. Private by default. No public profiles, ever.</div>
 <div class="sm-pills">
@@ -390,9 +390,10 @@ def _hero_html() -> str:
 _SECTIONS_HTML = """
 <div class="sm-section sm-center">
   <div class="sm-kicker">Platform Overview</div>
-  <div class="sm-h2">Built for serious matchmaking, powered by AI</div>
-  <div class="sm-lead">Every capability a matchmaking practice needs — ingestion, enrichment,
-  matching, astrology, and workflow — in one private workspace.</div>
+  <div class="sm-h2">Built for parents, powered by AI</div>
+  <div class="sm-lead">Everything a family needs to run their son or daughter's marriage
+  search — importing biodatas, comparing matches, horoscope compatibility, and
+  follow-ups — in one private workspace.</div>
   <div class="sm-stats">
     <div class="sm-stat"><div class="n">&lt;1<span> min</span></div>
       <div class="t">From chat export to structured profile</div>
@@ -401,8 +402,8 @@ _SECTIONS_HTML = """
       <div class="t">Full Ashtakoota horoscope scoring</div>
       <div class="d">Traditional koota matching computed precisely from birth details.</div></div>
     <div class="sm-stat"><div class="n">100<span>%</span></div>
-      <div class="t">Your data stays yours</div>
-      <div class="d">Self-hosted, role-based access, nothing shared with third parties.</div></div>
+      <div class="t">Your family's data stays yours</div>
+      <div class="d">Private by default — only you see your child's search. No public profiles, ever.</div></div>
   </div>
 </div>
 
@@ -457,12 +458,12 @@ _SECTIONS_HTML = """
     <div>
       <div class="sm-kicker">AI + Vedic Astrology</div>
       <div class="sm-h2">Modern intelligence, timeless wisdom</div>
-      <div class="sm-lead">Families want both: a practical fit and an auspicious one.
-      AI-SoulMatch is the rare platform that treats Vedic astrology as a first-class
-      signal alongside data-driven matching.</div>
+      <div class="sm-lead">Every family wants both: a practical fit and an auspicious one.
+      SoulMatch is the rare platform that treats Vedic astrology as a first-class
+      signal alongside practical matching — because that's how your family actually decides.</div>
       <ul class="sm-checks">
         <li>Ashtakoota (36-guna) compatibility computed from precise birth charts</li>
-        <li>Telugu naming for rasi, nakshatra, and koota — familiar to your families</li>
+        <li>Telugu naming for rasi, nakshatra, and koota — familiar to your elders</li>
         <li>Horoscope score blended with practical criteria in one ranked view</li>
         <li>Manual overrides when the astrologer’s judgment should prevail</li>
       </ul>
@@ -474,9 +475,9 @@ _SECTIONS_HTML = """
 
 <div class="sm-section sm-center">
   <div class="sm-kicker">Dashboard Preview</div>
-  <div class="sm-h2">Your entire practice, at a glance</div>
-  <div class="sm-lead">Live pipeline counts, overdue follow-ups, recent imports, and
-  match activity — the first screen you see every morning.</div>
+  <div class="sm-h2">Your child's entire search, at a glance</div>
+  <div class="sm-lead">Every proposal in play, follow-ups due, new biodatas waiting, and
+  match activity — the first screen you see with your morning coffee.</div>
   <div class="sm-mock">
     <div class="bar"><i style="background:#E8626F"></i><i style="background:#E8C55B"></i><i style="background:#7BC47F"></i></div>
     <div class="body">
@@ -496,25 +497,28 @@ _SECTIONS_HTML = """
 
 <div class="sm-section sm-center">
   <div class="sm-kicker">Testimonials</div>
-  <div class="sm-h2">Trusted by matchmakers who care</div>
+  <div class="sm-h2">Trusted by parents like you</div>
   <div class="sm-quotes">
     <div class="sm-quote">
-      <p>“What used to take me an evening — reading chats, copying details into notes —
-      now takes minutes. The profiles are cleaner than what I wrote by hand.”</p>
+      <p>“Every biodata that arrived on WhatsApp for my daughter used to get lost in the
+      scroll. Now each one becomes a proper profile in minutes, and I can finally compare
+      proposals side by side instead of from memory.”</p>
       <div class="who"><div class="av">LP</div>
-        <div><div class="nm">Lakshmi P.</div><div class="rl">Community Matchmaker · Hyderabad</div></div></div>
+        <div><div class="nm">Lakshmi P.</div><div class="rl">Mother of the bride · Hyderabad</div></div></div>
     </div>
     <div class="sm-quote">
-      <p>“The horoscope scoring in Telugu names is what won over the elder family members.
-      They trust it because it speaks their language — literally.”</p>
-      <div class="who"><div class="av">RS</div>
-        <div><div class="nm">Rao S.</div><div class="rl">Family Astrology Advisor</div></div></div>
+      <p>“Managing my son's search from New Jersey while the proposals came to my brother
+      in Vijayawada was chaos. Now the whole family sees the same profiles, notes, and
+      horoscope scores — nothing gets lost between calls to India.”</p>
+      <div class="who"><div class="av">VR</div>
+        <div><div class="nm">Venkat R.</div><div class="rl">Father of the groom · New Jersey, USA</div></div></div>
     </div>
     <div class="sm-quote">
-      <p>“I stopped losing track of introductions. The pipeline and reminders mean every
-      family gets a follow-up — that alone improved our success rate.”</p>
+      <p>“The koota score with Telugu names is what my grandmother trusts — and the
+      follow-up reminders are what I trust. Between us, no proposal for my brother
+      slips through anymore.”</p>
       <div class="who"><div class="av">AK</div>
-        <div><div class="nm">Anand K.</div><div class="rl">Matrimonial Bureau Owner</div></div></div>
+        <div><div class="nm">Anitha K.</div><div class="rl">Managing her brother's search · Bengaluru</div></div></div>
     </div>
   </div>
 </div>
@@ -522,17 +526,17 @@ _SECTIONS_HTML = """
 
 _CTA_FOOTER_HTML = f"""
 <div class="sm-cta">
-  <h2>Ready to make your next great match?</h2>
-  <p>Sign in to your workspace and let AI handle the paperwork while you handle the people.</p>
-  <a href="#ai-soulmatch-top">Sign in to SoulMatch</a>
+  <h2>Ready to find your child's soul match?</h2>
+  <p>Create your free private workspace — let AI organize the biodatas while you focus on your family.</p>
+  <a href="#ai-soulmatch-top">Start free with SoulMatch</a>
 </div>
 
 <div class="sm-footer">
   <div class="col">
     <img src="/app/static/logo.svg" alt="SoulMatch"/>
-    <div class="tag">AI-powered matrimonial intelligence — profile extraction, intelligent
-    matching, Vedic compatibility, and workflow in one private platform.
-    A product of RedPrana.</div>
+    <div class="tag">The private CRM for parents managing their son or daughter's marriage
+    search — AI profile extraction, intelligent matching, and Vedic compatibility in one
+    private workspace. A product of RedPrana.</div>
   </div>
   <div class="col"><h5>Platform</h5>
     <div>Profile Import<br/>Matchmaking<br/>Horoscope Check<br/>Search &amp; Insights</div></div>
@@ -553,12 +557,14 @@ def render_hero_left() -> None:
     st.markdown(_hero_html(), unsafe_allow_html=True)
 
 
-def render_pricing_section(currency: str = "INR") -> None:
+def _pricing_cards_html(currency: str) -> str:
     """Pricing cards sourced from soulmatch.billing (PLAN_PRICES_INR/USD,
     PLAN_LIMITS) so this can never drift from what's actually enforced
-    (V3-4-3). `currency` is chosen by the toggle app.py renders alongside
-    this — kept as a plain parameter so landing.py has no Streamlit widget
-    state of its own to manage."""
+    (V3-4-3).
+
+    Every line of generated HTML MUST be flush-left: st.markdown treats any
+    line indented 4+ spaces as a Markdown code block, which renders the raw
+    tags as text instead of a card (bug found live on the landing page)."""
     symbol = "₹" if currency == "INR" else "$"
     price_table = billing.PLAN_PRICES_INR if currency == "INR" else billing.PLAN_PRICES_USD
     cards = []
@@ -568,36 +574,47 @@ def render_pricing_section(currency: str = "INR") -> None:
         price_html = f"{symbol}{price}<span>/mo</span>" if price else "Free"
         highlight = " sm-price-highlight" if plan_key == "plus" else ""
         bulk = limits["bulk_imports"]
-        cards.append(f"""
-        <div class="sm-price-card{highlight}">
-          <div class="sm-price-plan">{label}</div>
-          <div class="sm-price-amount">{price_html}</div>
-          <ul>
-            <li>{limits['ai_actions']} AI actions/mo</li>
-            <li>{"Unlimited profiles" if limits['profiles'] is None else f"{limits['profiles']} profiles"}</li>
-            <li>{"AI match explanations" if limits['ai_explanations'] else "Koota scores (always free)"}</li>
-            <li>{"Natural-language search" if limits['nl_search'] else "Structured filters"}</li>
-            <li>{"Unlimited bulk imports" if bulk is None else f"{bulk} bulk import(s)/mo" if bulk else "Manual import only"}</li>
-          </ul>
-        </div>
-        """)
-    st.markdown(f"""
-    <div class="sm-section sm-center">
-      <div class="sm-kicker">Pricing</div>
-      <div class="sm-h2">Simple plans, no surprises</div>
-      <div class="sm-lead">Start free — upgrade only when your search needs more.
-      NRI? Pay in USD from the same plans.</div>
-      <div class="sm-pricing-grid">{''.join(cards)}</div>
-    </div>
-    """, unsafe_allow_html=True)
+        items = [
+            f"{limits['ai_actions']} AI actions/mo",
+            "Unlimited profiles" if limits["profiles"] is None else f"{limits['profiles']} profiles",
+            "AI match explanations" if limits["ai_explanations"] else "Koota scores (always free)",
+            "Natural-language search" if limits["nl_search"] else "Structured filters",
+            "Unlimited bulk imports" if bulk is None else f"{bulk} bulk import(s)/mo" if bulk else "Manual import only",
+        ]
+        items_html = "".join(f"<li>{item}</li>" for item in items)
+        cards.append(
+            f'<div class="sm-price-card{highlight}">'
+            f'<div class="sm-price-plan">{label}</div>'
+            f'<div class="sm-price-amount">{price_html}</div>'
+            f"<ul>{items_html}</ul>"
+            "</div>"
+        )
+    return "".join(cards)
+
+
+_PRICING_HEADER_HTML = """
+<div class="sm-section sm-center" style="padding-bottom:0;">
+<div class="sm-kicker">Pricing</div>
+<div class="sm-h2">Simple plans, no surprises</div>
+<div class="sm-lead">Start free — upgrade only when your child's search needs more.
+Living abroad? Pay in USD for the same plans.</div>
+</div>
+"""
 
 
 def render_sections() -> None:
     st.markdown(_SECTIONS_HTML, unsafe_allow_html=True)
+    # Pricing header first, THEN the currency toggle, then the cards — the
+    # toggle floating above the section heading read as if it belonged to
+    # the testimonials above it.
+    st.markdown(_PRICING_HEADER_HTML, unsafe_allow_html=True)
     with st.container(key="landing_currency_toggle"):
         currency = st.radio(
             "Currency", ["INR", "USD"], horizontal=True, label_visibility="collapsed",
             help="Choose USD if you're paying from outside India (NRI).", key="landing_currency",
         )
-    render_pricing_section(currency)
+    st.markdown(
+        f'<div class="sm-center"><div class="sm-pricing-grid">{_pricing_cards_html(currency)}</div></div>',
+        unsafe_allow_html=True,
+    )
     st.markdown(_CTA_FOOTER_HTML, unsafe_allow_html=True)

@@ -66,7 +66,7 @@ owner = owner_id_of(current_user)
 owner_tz = current_user.get("timezone")
 can_write = auth.can_edit(current_user["role"])
 
-theme.page_header("Profiles", "Every bride and groom in your practice — browse, edit, and track each case.")
+theme.page_header("Profiles", "Your child and every candidate in your search — browse, edit, and track each one.")
 show_flash()
 if not can_write:
     st.caption("Your account has read-only (Viewer) access.")
