@@ -1,0 +1,24 @@
+# Production reverse proxy (V3-4-1/V3-4-2). Caddy issues and renews the
+# HTTPS certificate for soulmatch.redprana.com automatically via Let's
+# Encrypt once DNS resolves to this server — no manual cert steps.
+#
+# [HUMAN]: point a GoDaddy DNS A record for `soulmatch` at this server's
+# public IP before starting this stack (see docs/DEPLOY.md) — Caddy will
+# fail its first cert request until DNS resolves.
+
+soulmatch.redprana.com {
+	# Payment-gateway webhooks (Razorpay/Stripe) go to the sidecar, not the
+	# Streamlit app — must be matched before the catch-all reverse_proxy below.
+	handle /webhooks/* {
+		reverse_proxy webhooks:8502
+	}
+
+	handle {
+		reverse_proxy app:8501 {
+			# Streamlit's websocket connection needs these headers forwarded,
+			# or the app silently fails to establish a session.
+			header_up Host {host}
+			header_up X-Real-IP {remote_host}
+		}
+	}
+}

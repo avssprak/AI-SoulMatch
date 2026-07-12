@@ -105,6 +105,16 @@ V3-1 shipped on 2026-07-12. What a fresh session must know before touching code:
   `WebhookEvent` models exist. Gateways are NOT yet connected to real
   accounts — see the `[HUMAN]` note under V3-3's own heading before
   assuming checkout works.
+- **V3-4 shipped (2026-07-12):** `Dockerfile`, `docker-compose.yml`,
+  `Caddyfile`, `deploy/backup.sh`, `docs/DEPLOY.md`, `docs/RESTORE_DRILL.md`
+  all exist and are verified (real `docker build`, real container runs,
+  real Caddy validation, a real restore drill against production data —
+  see V3-4's own heading for specifics). `soulmatch/errors.py` has the
+  optional Sentry hook. Branding: use "SoulMatch by RedPrana" going
+  forward, not "AI-SoulMatch" — `page_title`, hero, footer, and login card
+  all say this now; match it in any new user-facing copy. The site is NOT
+  actually deployed anywhere yet — these are the artifacts a human runs on
+  a real VPS, not a running production instance.
 
 **Verification recipe for every V3 task** (extends SPRINT_PLAN.md's):
 1. `.venv/Scripts/python.exe -m pytest -q` — all pass (126+ at V3-2 handoff).
@@ -132,7 +142,7 @@ then list the exact `[HUMAN]` steps left in your final report.
 ## Part 2 — Sprints
 
 Execute strictly in order — each sprint builds on the previous one's schema
-and helpers. **Next up: V3-4.** Work task-by-task, verify per Part 1.5 after
+and helpers. **Next up: V3-5.** Work task-by-task, verify per Part 1.5 after
 each task, and end every session by updating the sprint's status line here
 (✅ DONE date, or a "partially done: …" note listing exactly what remains).
 
@@ -308,7 +318,34 @@ V3-4 Docker Compose). Do not try to hack webhooks into Streamlit.
   rejection. No live API calls in tests; fixture JSON payloads checked into
   `tests/fixtures/`.
 
-### Sprint V3-4 — Deployment, domain & RedPrana branding
+### Sprint V3-4 — Deployment, domain & RedPrana branding — ✅ DONE 2026-07-12
+
+**Implementation notes for V3-5+ sessions:** all code-side tasks are
+complete and verified beyond unit tests — `docker build .` succeeds,
+both container commands (`streamlit run app.py` and `python
+webhook_server.py`) were run live and each served HTTP 200, `docker
+compose config` validates, and the `Caddyfile` was validated (and
+auto-formatted) with the real Caddy binary. `docs/RESTORE_DRILL.md`'s
+drill was actually rehearsed against a real snapshot of the production
+database (via SQLite's backup API), not just written as a hypothetical.
+Branding: `soulmatch/landing.py` and `app.py` now say "SoulMatch by
+RedPrana" (hero, footer, login card, `page_title`); the pricing table on
+the landing page and My Plan page both read from `billing.PLAN_PRICES_*`
+so they can't drift; the privacy promise is above the fold in the hero.
+Logo: code checks for `static/redprana-logo.svg` and falls back to a text
+wordmark if absent (no broken-image icon either way) — `[HUMAN]` drop the
+real file into **both** `assets/` and `static/` (this repo keeps them
+manually in sync, see the comment in `landing.py`) when it exists.
+`soulmatch/errors.py` wraps optional Sentry init — `sentry-sdk` is
+deliberately NOT added to `requirements.txt`; it only activates if both
+`SENTRY_DSN` is set and the package happens to be installed.
+**`[HUMAN]` steps still required before this is live** (all documented in
+`docs/DEPLOY.md`): rent the VPS, add the GoDaddy DNS A record, install
+Docker on the server, fill in `.env` (SECRET_KEY above all), run
+`docker compose up -d`, then point the Razorpay/Stripe webhook configs at
+the real domain (V3-3's own `[HUMAN]` list). Nothing here was stubbed —
+every piece of code runs correctly today against `mock`/no gateway
+config; it's the external accounts and DNS that don't exist yet.
 
 - **V3-4-1** Production deploy artifacts (all writable locally, no server
   needed to author them): `Dockerfile` (python:3.12-slim, install

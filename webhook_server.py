@@ -24,6 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from soulmatch import config, payments
 from soulmatch.db import get_session, init_db
+from soulmatch.errors import init_error_reporting
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("webhook_server")
@@ -95,6 +96,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    init_error_reporting()
     init_db()
     server = ThreadingHTTPServer(("0.0.0.0", config.WEBHOOK_SERVER_PORT), Handler)
     log.info(

@@ -67,6 +67,11 @@ STRIPE_PRICE_PLUS_ANNUAL = os.getenv("STRIPE_PRICE_PLUS_ANNUAL", "")
 STRIPE_PRICE_PRO_MONTHLY = os.getenv("STRIPE_PRICE_PRO_MONTHLY", "")
 STRIPE_PRICE_PRO_ANNUAL = os.getenv("STRIPE_PRICE_PRO_ANNUAL", "")
 
+# Optional error alerting (V3-4-4). Blank = disabled; sentry-sdk isn't a
+# hard dependency (see soulmatch.errors.init_error_reporting) — the app runs
+# fine without it.
+SENTRY_DSN = os.getenv("SENTRY_DSN", "")
+
 
 def ensure_dirs() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)

@@ -1,16 +1,19 @@
-"""AI-SoulMatch — Streamlit entry point."""
+"""SoulMatch by RedPrana — Streamlit entry point."""
 
 import streamlit as st
 
 from soulmatch import auth, billing, landing, theme
 from soulmatch.db import get_session, init_db
+from soulmatch.errors import init_error_reporting
+
+init_error_reporting()
 
 # White lockup: the authenticated sidebar is deep maroon (see theme.py), and
 # the landing page hides the logo entirely, so the white version is safe app-wide.
 LOGO_PATH = "assets/logo-white.svg"
 MARK_PATH = "assets/mark.svg"
 
-st.set_page_config(page_title="AI-SoulMatch", page_icon=MARK_PATH, layout="wide")
+st.set_page_config(page_title="SoulMatch by RedPrana", page_icon=MARK_PATH, layout="wide")
 st.logo(LOGO_PATH, size="large")
 
 init_db()
@@ -46,7 +49,9 @@ if auth.current_user() is None:
     with hero_right:
         with st.container(key="login_card"):
             st.markdown(
-                '<img src="/app/static/mark.svg" style="height:40px; margin-bottom:6px;"/>',
+                '<img src="/app/static/mark.svg" style="height:40px; margin-bottom:6px;"/>'
+                '<div style="font:500 0.8rem/1 Inter,sans-serif; color:#7A6E66; margin-bottom:14px;">'
+                'SoulMatch by RedPrana</div>',
                 unsafe_allow_html=True,
             )
             tab_signin, tab_signup = st.tabs(["Sign in", "Create account"])

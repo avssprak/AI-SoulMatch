@@ -1,0 +1,48 @@
+# Production deploy (V3-4-1). Both `app` and `webhooks` build from the same
+# Dockerfile and share the SQLite database + uploads via bind-mounted
+# volumes — SQLite tolerates one writer process at a time reasonably well
+# at this app's scale (see V3_PLAN.md: Postgres is deferred until
+# ~1-2k users), and both processes here write infrequently relative to
+# reads.
+#
+# First deploy: see docs/DEPLOY.md for the exact commands.
+
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - ./uploads:/app/uploads
+    expose:
+      - "8501"
+
+  webhooks:
+    build: .
+    restart: unless-stopped
+    command: ["python", "webhook_server.py"]
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - ./uploads:/app/uploads
+    expose:
+      - "8502"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+      - webhooks
+
+volumes:
+  caddy_data:
+  caddy_config:

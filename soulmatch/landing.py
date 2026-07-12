@@ -7,7 +7,31 @@ with st.markdown. Palette: ivory / deep maroon / gold / soft saffron.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import streamlit as st
+
+from . import billing, config
+
+# V3-4-3: the [HUMAN] logo file — drop it in BOTH assets/ (st.logo/page_icon
+# read local paths directly) and static/ (Streamlit's static file server,
+# what markdown <img> tags below actually fetch; this repo keeps the two in
+# manual sync, see app.py's LOGO_PATH/MARK_PATH). Until it exists, every
+# lockup below falls back to a plain text wordmark — never a broken image.
+_REDPRANA_LOGO_STATIC_PATH = config.PROJECT_ROOT / "static" / "redprana-logo.svg"
+
+
+def _redprana_lockup_html(*, light: bool, img_height: str = "22px") -> str:
+    """'by RedPrana' wordmark, with the real logo once static/redprana-logo.svg
+    exists — checked server-side so a missing file never shows a broken-image
+    icon (no reliance on JS onerror)."""
+    text_color = "rgba(255,248,238,0.75)" if light else "var(--sm-muted)"
+    if _REDPRANA_LOGO_STATIC_PATH.exists():
+        return (
+            f'<span class="sm-by">by <img src="/app/static/redprana-logo.svg" '
+            f'alt="RedPrana" style="height:{img_height}; vertical-align:middle; margin-left:4px;"/></span>'
+        )
+    return f'<span class="sm-by" style="color:{text_color};">by <b>RedPrana</b></span>'
 
 # One source of truth for the brand palette, referenced throughout the CSS.
 _CSS = """
@@ -54,8 +78,55 @@ img[data-testid="stLogo"] { display: none; }
 .block-container > div { position: relative; z-index: 1; }
 
 /* ---------- hero ---------- */
-.sm-brand { display: flex; align-items: center; margin: 0 0 40px -6px; }
-.sm-brand img { height: 62px; }
+.sm-brand { display: flex; align-items: baseline; gap: 12px; margin: 0 0 40px -6px; }
+.sm-brand img.sm-mark { height: 62px; }
+.sm-by { font: 500 0.82rem/1 'Inter', sans-serif; }
+.sm-by b { color: var(--sm-gold-soft); font-weight: 700; }
+
+/* ---------- privacy promise strip (V3-4-3, above the fold) ---------- */
+.sm-privacy-strip {
+    display: inline-flex; align-items: center; gap: 10px;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 999px;
+    padding: 10px 20px;
+    margin-bottom: 26px;
+    font: 500 0.88rem/1.4 'Inter', sans-serif;
+    color: #FFF8EE;
+    backdrop-filter: blur(3px);
+    max-width: 560px;
+}
+
+/* ---------- pricing table ---------- */
+.sm-pricing-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; margin-top: 44px; }
+.sm-price-card {
+    background: #fff; border: 1px solid #F0E4D2; border-radius: 16px;
+    padding: 30px 26px; text-align: left;
+    box-shadow: 0 8px 30px rgba(92,22,48,0.05);
+}
+.sm-price-card.sm-price-highlight {
+    border: 2px solid var(--sm-gold);
+    box-shadow: 0 16px 44px rgba(201,162,39,0.18);
+    position: relative;
+}
+.sm-price-card.sm-price-highlight::before {
+    content: "MOST POPULAR";
+    position: absolute; top: -12px; left: 26px;
+    background: var(--sm-gold); color: #fff;
+    font: 700 0.68rem/1 'Inter', sans-serif; letter-spacing: 0.06em;
+    padding: 5px 12px; border-radius: 999px;
+}
+.sm-price-plan { font: 700 1.1rem/1 'Playfair Display', Georgia, serif; color: var(--sm-maroon); margin-bottom: 10px; }
+.sm-price-amount { font: 800 2rem/1 'Inter', sans-serif; color: var(--sm-maroon-2); margin-bottom: 4px; }
+.sm-price-amount span { font: 500 0.9rem/1 'Inter', sans-serif; color: var(--sm-muted); }
+.sm-price-card ul { list-style: none; padding: 0; margin: 18px 0 0 0; }
+.sm-price-card li {
+    font: 400 0.9rem/1.6 'Inter', sans-serif; color: var(--sm-ink);
+    padding: 6px 0 6px 22px; position: relative;
+}
+.sm-price-card li::before { content: "✓"; position: absolute; left: 0; color: var(--sm-gold); font-weight: 700; }
+div[class*="st-key-landing_currency_toggle"] { max-width: 260px; margin: 0 auto 8px auto; text-align: center; }
+div[class*="st-key-landing_currency_toggle"] [data-testid="stRadio"] > div { justify-content: center; }
 
 .sm-eyebrow {
     display: inline-block;
@@ -297,15 +368,17 @@ div[class*="st-key-login_card"] h3 { font-family: 'Playfair Display', Georgia, s
 </style>
 """
 
-_HERO_HTML = """
-<div class="sm-brand"><img src="/app/static/logo-white.svg" alt="AI-SoulMatch"/></div>
+def _hero_html() -> str:
+    return f"""
+<div class="sm-brand"><img class="sm-mark" src="/app/static/logo-white.svg" alt="SoulMatch"/>{_redprana_lockup_html(light=True)}</div>
 <div class="sm-eyebrow">AI-Powered Matrimonial Intelligence</div>
 <div class="sm-h1">Where tradition meets <em>intelligent</em> matchmaking.</div>
 <div class="sm-hero-sub">
-  AI-SoulMatch turns WhatsApp chats, PDFs, and biodata into structured profiles,
+  SoulMatch turns WhatsApp chats, PDFs, and biodata into structured profiles,
   scores compatibility with configurable criteria and Vedic astrology, and tracks
   every introduction from first contact to celebration.
 </div>
+<div class="sm-privacy-strip">🔒 Your data is yours. Private by default. No public profiles, ever.</div>
 <div class="sm-pills">
   <div class="sm-pill"><b>⚡</b> AI profile extraction</div>
   <div class="sm-pill"><b>♥</b> Intelligent matching</div>
@@ -445,27 +518,30 @@ _SECTIONS_HTML = """
     </div>
   </div>
 </div>
+"""
 
+_CTA_FOOTER_HTML = f"""
 <div class="sm-cta">
   <h2>Ready to make your next great match?</h2>
   <p>Sign in to your workspace and let AI handle the paperwork while you handle the people.</p>
-  <a href="#ai-soulmatch-top">Sign in to AI-SoulMatch</a>
+  <a href="#ai-soulmatch-top">Sign in to SoulMatch</a>
 </div>
 
 <div class="sm-footer">
   <div class="col">
-    <img src="/app/static/logo.svg" alt="AI-SoulMatch"/>
+    <img src="/app/static/logo.svg" alt="SoulMatch"/>
     <div class="tag">AI-powered matrimonial intelligence — profile extraction, intelligent
-    matching, Vedic compatibility, and workflow in one private platform.</div>
+    matching, Vedic compatibility, and workflow in one private platform.
+    A product of RedPrana.</div>
   </div>
   <div class="col"><h5>Platform</h5>
     <div>Profile Import<br/>Matchmaking<br/>Horoscope Check<br/>Search &amp; Insights</div></div>
   <div class="col"><h5>Workflow</h5>
-    <div>Dashboard<br/>Pipeline Tracking<br/>Tasks &amp; Reminders<br/>User Management</div></div>
+    <div>Dashboard<br/>Pipeline Tracking<br/>Tasks &amp; Reminders<br/>My Plan</div></div>
   <div class="col"><h5>Trust</h5>
-    <div>Self-hosted &amp; private<br/>Role-based access<br/>Your data, always<br/>&nbsp;</div></div>
+    <div>Private by default<br/>No public profiles, ever<br/>Your data, always<br/>&nbsp;</div></div>
 </div>
-<div class="sm-copy">© 2026 AI-SoulMatch · Crafted with care for families and matchmakers</div>
+<div class="sm-copy">© 2026 SoulMatch {_redprana_lockup_html(light=False)} · Crafted with care for families</div>
 """
 
 
@@ -474,8 +550,54 @@ def inject_css() -> None:
 
 
 def render_hero_left() -> None:
-    st.markdown(_HERO_HTML, unsafe_allow_html=True)
+    st.markdown(_hero_html(), unsafe_allow_html=True)
+
+
+def render_pricing_section(currency: str = "INR") -> None:
+    """Pricing cards sourced from soulmatch.billing (PLAN_PRICES_INR/USD,
+    PLAN_LIMITS) so this can never drift from what's actually enforced
+    (V3-4-3). `currency` is chosen by the toggle app.py renders alongside
+    this — kept as a plain parameter so landing.py has no Streamlit widget
+    state of its own to manage."""
+    symbol = "₹" if currency == "INR" else "$"
+    price_table = billing.PLAN_PRICES_INR if currency == "INR" else billing.PLAN_PRICES_USD
+    cards = []
+    for plan_key, label in (("free", "Free"), ("plus", "Plus"), ("pro", "Pro")):
+        limits = billing.limits_for(plan_key)
+        price = price_table[plan_key]
+        price_html = f"{symbol}{price}<span>/mo</span>" if price else "Free"
+        highlight = " sm-price-highlight" if plan_key == "plus" else ""
+        bulk = limits["bulk_imports"]
+        cards.append(f"""
+        <div class="sm-price-card{highlight}">
+          <div class="sm-price-plan">{label}</div>
+          <div class="sm-price-amount">{price_html}</div>
+          <ul>
+            <li>{limits['ai_actions']} AI actions/mo</li>
+            <li>{"Unlimited profiles" if limits['profiles'] is None else f"{limits['profiles']} profiles"}</li>
+            <li>{"AI match explanations" if limits['ai_explanations'] else "Koota scores (always free)"}</li>
+            <li>{"Natural-language search" if limits['nl_search'] else "Structured filters"}</li>
+            <li>{"Unlimited bulk imports" if bulk is None else f"{bulk} bulk import(s)/mo" if bulk else "Manual import only"}</li>
+          </ul>
+        </div>
+        """)
+    st.markdown(f"""
+    <div class="sm-section sm-center">
+      <div class="sm-kicker">Pricing</div>
+      <div class="sm-h2">Simple plans, no surprises</div>
+      <div class="sm-lead">Start free — upgrade only when your search needs more.
+      NRI? Pay in USD from the same plans.</div>
+      <div class="sm-pricing-grid">{''.join(cards)}</div>
+    </div>
+    """, unsafe_allow_html=True)
 
 
 def render_sections() -> None:
     st.markdown(_SECTIONS_HTML, unsafe_allow_html=True)
+    with st.container(key="landing_currency_toggle"):
+        currency = st.radio(
+            "Currency", ["INR", "USD"], horizontal=True, label_visibility="collapsed",
+            help="Choose USD if you're paying from outside India (NRI).", key="landing_currency",
+        )
+    render_pricing_section(currency)
+    st.markdown(_CTA_FOOTER_HTML, unsafe_allow_html=True)
