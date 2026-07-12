@@ -4,7 +4,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from soulmatch import insights
-from soulmatch.models import Activity, Base, MatchResult, Profile, User
+from soulmatch.models import Activity, Base, MatchResult, Profile, Task, User
 
 OWNER = 1
 
@@ -93,6 +93,29 @@ def test_stale_cases_excludes_inactive_stages_and_recent_activity():
     stale = insights.stale_cases(session, OWNER, days=14, today=today)
     names = {p.full_name for p in stale}
     assert names == {"Stale"}
+
+
+def test_stale_shortlisted_flags_only_shortlisted_with_no_open_task_or_recent_activity():
+    session = _memory_session()
+    _seed_owner(session)
+    today = date(2026, 7, 12)
+    old_dt = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    recent_dt = datetime(2026, 7, 11, tzinfo=timezone.utc)
+
+    stale_shortlisted = Profile(owner_user_id=OWNER, full_name="Stale Shortlisted", gender="Bride", stage="Interested", created_at=old_dt)
+    has_open_task = Profile(owner_user_id=OWNER, full_name="Has Open Task", gender="Bride", stage="Interested", created_at=old_dt)
+    recently_active = Profile(owner_user_id=OWNER, full_name="Recently Active", gender="Bride", stage="Interested", created_at=old_dt)
+    not_shortlisted = Profile(owner_user_id=OWNER, full_name="Not Shortlisted", gender="Bride", stage="New", created_at=old_dt)
+    session.add_all([stale_shortlisted, has_open_task, recently_active, not_shortlisted])
+    session.commit()
+
+    session.add(Task(profile_id=has_open_task.id, title="Call parents", status="Pending"))
+    session.add(Activity(profile_id=recently_active.id, event="Called", created_at=recent_dt))
+    session.commit()
+
+    stale = insights.stale_shortlisted(session, OWNER, days=7, today=today)
+    names = {p.full_name for p in stale}
+    assert names == {"Stale Shortlisted"}
 
 
 def test_best_matches_for_ranks_by_practical_score():

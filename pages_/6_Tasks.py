@@ -7,7 +7,8 @@ from sqlalchemy import select
 from soulmatch import auth, theme
 from soulmatch.db import get_session
 from soulmatch.models import TASK_STATUSES, Activity, Profile, Task, utcnow
-from soulmatch.nav import TASKS_OVERDUE_PREF_KEY, open_profile_button
+from soulmatch.nav import TASKS_OVERDUE_PREF_KEY, open_profile_button, show_next_step
+from soulmatch.task_ui import render_task_quick_add
 from soulmatch.tasks import overdue_tasks, upcoming_tasks
 from soulmatch.tenancy import get_owned, owned, owner_id_of
 
@@ -15,7 +16,8 @@ current_user = auth.require_login()
 owner = owner_id_of(current_user)
 can_write = auth.can_edit(current_user["role"])
 
-theme.page_header("Tasks & Reminders", "Follow-ups for every introduction — nothing slips through.")
+theme.page_header("Follow-Ups", "Follow-ups for every introduction — nothing slips through.")
+show_next_step()
 if not can_write:
     st.caption("Your account has read-only (Viewer) access.")
 
@@ -28,6 +30,19 @@ c1, c2, c3 = st.columns(3)
 c1.metric("Pending Tasks", len(all_pending))
 c2.metric("Overdue", len(overdue))
 c3.metric("Due in 7 Days", len(upcoming))
+
+if can_write:
+    with get_session() as session:
+        all_profiles = session.scalars(owned(select(Profile), Profile, owner).order_by(Profile.full_name)).all()
+    if all_profiles:
+        with st.expander("➕ Add a follow-up task"):
+            quick_add_profile_id = st.selectbox(
+                "For which candidate?", [p.id for p in all_profiles],
+                format_func=lambda pid: next(f"#{p.id} {p.full_name or 'Unnamed'}" for p in all_profiles if p.id == pid),
+                key="tasks_quick_add_profile",
+            )
+            with get_session() as session:
+                render_task_quick_add(session, owner, current_user, quick_add_profile_id, key_prefix="tasks_page")
 
 st.divider()
 

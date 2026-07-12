@@ -155,7 +155,7 @@ with tab_insights:
         st.divider()
         theme.section("Best Match Finder")
         st.caption(
-            "Moved — use **Matchmaking → Find Matches for Someone** for this. "
+            "Moved — use **Match & Compare → Find Matches for Someone** for this. "
             "That version also includes astrology koota scores and lets you drill into "
             "full match detail (AI recommendation, save result) for any candidate."
         )

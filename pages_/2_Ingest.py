@@ -20,6 +20,7 @@ from soulmatch.ingest.document_import import parse_document
 from soulmatch.ingest.whatsapp_export import parse_export
 from soulmatch.models import Activity, Profile, RawMessage
 from soulmatch import theme
+from soulmatch.nav import PROFILES_PAGE, queue_next_step, show_next_step
 from soulmatch.tenancy import get_owned, owned, owner_id_of
 from soulmatch.ui import check_upload_size, flash, show_flash
 
@@ -125,6 +126,8 @@ def _auto_process_raw_messages(message_ids: list[int], current_user: dict) -> No
         session.commit()
     progress.empty()
     flash(f"Auto-processed: {saved} profile(s) created" + (f", {merged} merged into existing profiles." if merged else "."))
+    if saved or merged:
+        queue_next_step("Review candidates →", PROFILES_PAGE)
     if skipped_low_conf:
         flash(
             f"{skipped_low_conf} message(s) skipped — low confidence, left for manual review.",
@@ -154,8 +157,9 @@ def _auto_process_raw_messages(message_ids: list[int], current_user: dict) -> No
 
 current_user = auth.require_login()
 owner = owner_id_of(current_user)
-theme.page_header("Import Profiles", "Bring in WhatsApp chat exports and documents — AI turns them into structured profiles.")
+theme.page_header("Add Candidates", "Bring in WhatsApp chat exports and documents — AI turns them into structured candidate profiles.")
 show_flash()
+show_next_step()
 
 with get_session() as _session:
     _review_count = len(_session.scalars(
@@ -506,6 +510,7 @@ with tab_review:
                                         merge_session.commit()
                                     del st.session_state[pending_key]
                                     flash(f"Merged into profile #{d.profile.id} — {len(filled)} field(s) filled in.")
+                                    queue_next_step("Review candidates →", PROFILES_PAGE)
                                     st.rerun()
 
                     with st.container(horizontal=True):
@@ -532,6 +537,7 @@ with tab_review:
                                     session.commit()
                                     del st.session_state[pending_key]
                                     flash("Profile created.")
+                                    queue_next_step("Review candidates →", PROFILES_PAGE)
                                     st.rerun()
                         if st.button(
                             "Start over", key=f"discard_{msg.id}",

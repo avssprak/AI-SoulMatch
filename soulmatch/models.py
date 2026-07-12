@@ -66,6 +66,17 @@ STANDARD_TASK_TITLES = [
     "Schedule second meeting",
 ]
 
+# V4-5-1: default due-date offset (days from today) for each one-click task
+# template, so "Call parents" etc. can be added with a single click instead
+# of also requiring the due date to be picked every time.
+TASK_TEMPLATE_DUE_DAYS: dict[str, int] = {
+    "Call parents": 2,
+    "Collect horoscope": 5,
+    "Upload biodata": 3,
+    "Follow up after meeting": 7,
+    "Schedule second meeting": 7,
+}
+
 # V3 SaaS model (see V3_PLAN.md Part 0): one customer-facing role. A Member
 # is a parent or individual with a private workspace — every domain row they
 # create carries their owner_user_id and no other Member can ever see it.
@@ -105,6 +116,11 @@ class User(Base):
     # Storage stays UTC everywhere else — this only affects display
     # (see soulmatch.timezones).
     timezone: Mapped[str] = mapped_column(String(64), default="Asia/Kolkata")
+    # V4-4-1: weight (0-100) this member gives the astrology score vs the
+    # practical score when blending the two into the Scoreboard's composite —
+    # a member preference, not a per-match setting, since it reflects how
+    # much stock this family puts in Vedic matching generally.
+    astro_weight: Mapped[int] = mapped_column(Integer, default=50)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_login: Mapped[datetime | None] = mapped_column(DateTime)

@@ -23,8 +23,14 @@ $lanIP = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {
 
 # V3-3: payment-gateway webhooks arrive on a separate stdlib HTTP sidecar —
 # Streamlit itself can't receive arbitrary POST routes. See webhook_server.py.
+# -NoNewWindow (not -WindowStyle Hidden): hiding a window requires an
+# interactive window station, which isn't always available when this script
+# itself is launched non-interactively/detached (e.g. as a background job) —
+# under that condition -WindowStyle Hidden makes Start-Process fail with a
+# misleading "FilePath is null or empty" error. -NoNewWindow has no such
+# dependency and still keeps the sidecar out of the way (no console popup).
 Write-Host "Starting webhook sidecar (payments)..." -ForegroundColor Green
-$webhookProcess = Start-Process -FilePath $venvPythonExe -ArgumentList "webhook_server.py" -PassThru -WindowStyle Hidden
+$webhookProcess = Start-Process -FilePath $venvPythonExe -ArgumentList "webhook_server.py" -PassThru -NoNewWindow
 Write-Host "  Webhooks: http://localhost:8502/webhooks/{razorpay,stripe}  (pid $($webhookProcess.Id))"
 
 Write-Host "Starting AI-SoulMatch..." -ForegroundColor Green

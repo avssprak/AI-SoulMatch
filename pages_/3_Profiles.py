@@ -10,15 +10,17 @@ from soulmatch.db import get_session
 from soulmatch.documents import DOCUMENT_KINDS, delete_document, read_document, save_document
 from soulmatch.duplicates import find_all_duplicate_pairs, find_duplicate_candidates, merge_profiles
 from soulmatch.extraction.llm import LLMError
+from soulmatch.horoscope_ui import compute_and_save_chart
 from soulmatch.matchview import render_saved_match_result
 from soulmatch.models import (
-    PIPELINE_STAGES, STANDARD_TASK_TITLES, Activity, Document, MatchResult, Profile, Task, User,
+    PIPELINE_STAGES, Activity, Document, MatchResult, Profile, Task, User,
     stage_group_label, utcnow,
 )
-from soulmatch.nav import consume_open_profile_request
+from soulmatch.nav import MATCHING_PAGE, consume_open_profile_request, next_step_button, show_next_step
 from soulmatch.profiles import age_from_dob, delete_profile, is_match_ready, profile_completeness
 from soulmatch.search import describe_filters, parse_query
 from soulmatch.summary import profile_summary_html
+from soulmatch.task_ui import render_task_quick_add
 from soulmatch.tenancy import get_owned, owned, owner_id_of
 from soulmatch.timezones import to_local
 from soulmatch import theme
@@ -66,8 +68,9 @@ owner = owner_id_of(current_user)
 owner_tz = current_user.get("timezone")
 can_write = auth.can_edit(current_user["role"])
 
-theme.page_header("Profiles", "Your child and every candidate in your search — browse, edit, and track each one.")
+theme.page_header("Candidates", "Your child and every candidate in your search — browse, edit, and track each one.")
 show_flash()
+show_next_step()
 if not can_write:
     st.caption("Your account has read-only (Viewer) access.")
 
@@ -356,8 +359,8 @@ with tab_search:
                         flash(f"Moved to {quick_stage}.")
                         st.rerun()
 
-            tab_overview, tab_docs, tab_tasks, tab_matches, tab_history = st.tabs(
-                ["Overview", "Documents", "Tasks", "Matches", "History"]
+            tab_overview, tab_docs, tab_followup, tab_matches = st.tabs(
+                ["Overview", "Documents", "Follow-up", "Matches"]
             )
 
             with tab_overview:
@@ -460,6 +463,34 @@ with tab_search:
                                     )
                                 st.rerun()
 
+                if not profile.horoscope_available or not match_ready:
+                    with st.expander("🔯 Compute horoscope", expanded=not match_ready):
+                        compute_and_save_chart(session, owner, current_user, profile, key_prefix="profiles")
+
+                if can_write:
+                    with st.expander("🗑️ Delete this profile"):
+                        st.warning(
+                            "Permanently deletes this profile along with its documents, tasks, "
+                            "activity history, and any saved match results. This cannot be undone."
+                        )
+                        confirm_key = f"confirm_delete_profile_{profile.id}"
+                        if confirm_key in st.session_state:
+                            st.error(f"Really delete profile #{profile.id} — {profile.full_name or 'Unnamed'}?")
+                            with st.container(horizontal=True):
+                                if st.button("Yes, delete permanently", key=f"confirm_delete_profile_btn_{profile.id}", type="primary"):
+                                    summary = delete_profile(session, profile)
+                                    del st.session_state[confirm_key]
+                                    st.session_state["_clear_profiles_selection"] = True
+                                    flash(f"Deleted profile #{summary['id']}.")
+                                    st.rerun()
+                                if st.button("Cancel", key=f"cancel_delete_profile_{profile.id}"):
+                                    del st.session_state[confirm_key]
+                                    st.rerun()
+                        else:
+                            if st.button("Delete this profile", key=f"delete_profile_{profile.id}"):
+                                st.session_state[confirm_key] = True
+                                st.rerun()
+
             with tab_docs:
                 existing_docs = session.scalars(
                     select(Document).where(Document.profile_id == profile.id).order_by(Document.created_at.desc())
@@ -507,22 +538,34 @@ with tab_search:
                                 session.commit()
                                 st.rerun()
 
-            with tab_tasks:
+            with tab_followup:
+                # V4-5-2: tasks, activities, and stage changes interleaved into
+                # one timeline (newest first) — a member shouldn't have to
+                # check two tabs to see "what's happened / what's next" for a
+                # candidate. Tasks and Activities were always separate tables;
+                # this only merges the *view*, not the storage.
                 today = date.today()
                 existing_tasks = session.scalars(
                     select(Task).where(Task.profile_id == profile.id)
-                    .order_by(Task.status, Task.due_date.is_(None), Task.due_date)
                 ).all()
-                if existing_tasks:
-                    for task in existing_tasks:
+                activities = session.scalars(
+                    select(Activity).where(Activity.profile_id == profile.id).order_by(Activity.created_at.desc())
+                ).all()
+                actor_ids = {a.created_by_user_id for a in activities if a.created_by_user_id}
+                actor_names = {
+                    u.id: (u.full_name or u.username)
+                    for u in session.scalars(select(User).where(User.id.in_(actor_ids))).all()
+                } if actor_ids else {}
+
+                pending_tasks_here = [t for t in existing_tasks if t.status == "Pending"]
+                if pending_tasks_here:
+                    theme.section("Open follow-ups")
+                    for task in sorted(pending_tasks_here, key=lambda t: (t.due_date is None, t.due_date)):
                         tcol1, tcol2, tcol3 = st.columns([3, 1, 1])
-                        label = f"**{task.title}**"
-                        if task.due_date:
-                            overdue = task.status == "Pending" and task.due_date < today
-                            label += f" — due {task.due_date}" + (" ⚠️ overdue" if overdue else "")
-                        label += f" ({task.status})"
+                        overdue = task.due_date is not None and task.due_date < today
+                        label = f"**{task.title}**" + (f" — due {task.due_date}" + (" ⚠️ overdue" if overdue else "") if task.due_date else "")
                         tcol1.markdown(label)
-                        if can_write and task.status == "Pending":
+                        if can_write:
                             if tcol2.button("Done", key=f"task_done_{task.id}"):
                                 task.status = "Done"
                                 task.completed_at = utcnow()
@@ -534,26 +577,41 @@ with tab_search:
                                 task.status = "Cancelled"
                                 session.commit()
                                 st.rerun()
-                else:
-                    st.caption("No tasks yet.")
 
                 if can_write:
-                    with st.form("add_task", clear_on_submit=True):
-                        tcol1, tcol2 = st.columns([2, 1])
-                        title_choice = tcol1.selectbox("Task", STANDARD_TASK_TITLES + ["Custom..."])
-                        custom_title = tcol1.text_input("Custom task title (if 'Custom...' selected)")
-                        due = tcol2.date_input("Due date", value=None)
-                        if st.form_submit_button("Add task"):
-                            final_title = custom_title.strip() if title_choice == "Custom..." else title_choice
-                            if not final_title:
-                                st.warning("Enter a task title.")
-                            else:
-                                session.add(Task(profile_id=profile.id, owner_user_id=owner, title=final_title, due_date=due,
-                                                  created_by_user_id=current_user["id"]))
-                                session.add(Activity(profile_id=profile.id, owner_user_id=owner, event="Task added", detail=final_title,
-                                                      created_by_user_id=current_user["id"]))
+                    render_task_quick_add(session, owner, current_user, profile.id, key_prefix="drawer")
+                    with st.form(f"add_note_{profile.id}", clear_on_submit=True):
+                        note = st.text_input("Add a note")
+                        if st.form_submit_button("Add note"):
+                            if note.strip():
+                                session.add(Activity(profile_id=profile.id, owner_user_id=owner, event="Note",
+                                                      detail=note.strip(), created_by_user_id=current_user["id"]))
                                 session.commit()
                                 st.rerun()
+
+                theme.section("Timeline")
+                timeline = [
+                    {
+                        "ts": (t.completed_at or t.created_at),
+                        "label": f"Task {t.status.lower()}: {t.title}" + (f" (due {t.due_date})" if t.due_date and t.status == "Pending" else ""),
+                        "who": None,
+                    }
+                    for t in existing_tasks
+                ] + [
+                    {
+                        "ts": a.created_at,
+                        "label": a.event + (f": {a.detail}" if a.detail else ""),
+                        "who": actor_names.get(a.created_by_user_id),
+                    }
+                    for a in activities
+                ]
+                timeline.sort(key=lambda row: row["ts"], reverse=True)
+                if timeline:
+                    for row in timeline:
+                        who = f" by {row['who']}" if row["who"] else ""
+                        st.markdown(f"**{to_local(row['ts'], owner_tz):%d %b %Y, %H:%M}** — {row['label']}{who}")
+                else:
+                    st.caption("Nothing logged yet — tasks, notes, and stage changes will appear here.")
 
             with tab_matches:
                 profile_matches = session.scalars(
@@ -563,7 +621,7 @@ with tab_search:
                 ).all()
                 if not profile_matches:
                     st.caption(
-                        "No saved matches for this profile yet. Use **Matchmaking** to evaluate and "
+                        "No saved matches for this profile yet. Use **Match & Compare** to evaluate and "
                         "save a match against a candidate."
                     )
                 else:
@@ -595,57 +653,6 @@ with tab_search:
                     st.divider()
                     render_saved_match_result(picked_match, bride, groom, tz_name=owner_tz)
 
-            with tab_history:
-                theme.section("Activity Timeline")
-                activities = session.scalars(
-                    select(Activity).where(Activity.profile_id == profile.id).order_by(Activity.created_at.desc())
-                ).all()
-                actor_ids = {a.created_by_user_id for a in activities if a.created_by_user_id}
-                actor_names = {
-                    u.id: (u.full_name or u.username)
-                    for u in session.scalars(select(User).where(User.id.in_(actor_ids))).all()
-                } if actor_ids else {}
-                for a in activities:
-                    who = f" by {actor_names[a.created_by_user_id]}" if a.created_by_user_id in actor_names else ""
-                    st.markdown(
-                        f"**{to_local(a.created_at, owner_tz):%d %b %Y, %H:%M}** — {a.event}{who}" + (f": {a.detail}" if a.detail else "")
-                    )
-
-                if can_write:
-                    with st.form("add_activity"):
-                        event = st.text_input("Log new activity (e.g. 'Parents Contacted', 'Meeting Scheduled')")
-                        detail = st.text_input("Detail (optional)")
-                        if st.form_submit_button("Log activity"):
-                            if event:
-                                session.add(Activity(profile_id=profile.id, owner_user_id=owner, event=event, detail=detail or None,
-                                                      created_by_user_id=current_user["id"]))
-                                session.commit()
-                                st.rerun()
-
-                if can_write:
-                    st.divider()
-                    with st.expander("🗑️ Delete this profile"):
-                        st.warning(
-                            "Permanently deletes this profile along with its documents, tasks, "
-                            "activity history, and any saved match results. This cannot be undone."
-                        )
-                        confirm_key = f"confirm_delete_profile_{profile.id}"
-                        if confirm_key in st.session_state:
-                            st.error(f"Really delete profile #{profile.id} — {profile.full_name or 'Unnamed'}?")
-                            with st.container(horizontal=True):
-                                if st.button("Yes, delete permanently", key=f"confirm_delete_profile_btn_{profile.id}", type="primary"):
-                                    summary = delete_profile(session, profile)
-                                    del st.session_state[confirm_key]
-                                    st.session_state["_clear_profiles_selection"] = True
-                                    flash(f"Deleted profile #{summary['id']}.")
-                                    st.rerun()
-                                if st.button("Cancel", key=f"cancel_delete_profile_{profile.id}"):
-                                    del st.session_state[confirm_key]
-                                    st.rerun()
-                        else:
-                            if st.button("Delete this profile", key=f"delete_profile_{profile.id}"):
-                                st.session_state[confirm_key] = True
-                                st.rerun()
     else:
         with get_session() as _empty_check_session:
             any_profile_exists = _empty_check_session.scalar(
@@ -655,7 +662,7 @@ with tab_search:
             st.info("No profiles match these filters.")
         else:
             st.info(
-                "No profiles yet — head to **Import Profiles** to bring in a WhatsApp chat or "
+                "No candidates yet — head to **Add Candidates** to bring in a WhatsApp chat or "
                 "biodata, or use the **Add Manually** tab below."
             )
 
@@ -733,6 +740,12 @@ with tab_manual:
                             new_id = profile.id
                             del st.session_state["pending_manual_profile"]
                             st.success(f"Created profile #{new_id}.")
+                            # Matching doesn't yet support deep-linking a specific
+                            # candidate (that lands with the V4-4 scoreboard), so
+                            # this just opens the page rather than preselecting.
+                            next_step_button(
+                                "Score against your child →", MATCHING_PAGE, key="manual_add_next_step",
+                            )
                 if st.button("Cancel"):
                     del st.session_state["pending_manual_profile"]
                     st.rerun()

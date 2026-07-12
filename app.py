@@ -5,6 +5,10 @@ import streamlit as st
 from soulmatch import auth, billing, landing, legal, theme
 from soulmatch.db import get_session, init_db
 from soulmatch.errors import init_error_reporting
+from soulmatch.nav import (
+    DASHBOARD_PAGE, INGEST_PAGE, MATCHING_PAGE, MY_CHILD_PAGE, MY_PLAN_PAGE,
+    PROFILES_PAGE, SEARCH_PAGE, TASKS_PAGE, USERS_PAGE,
+)
 from soulmatch.timezones import to_local
 
 
@@ -149,6 +153,7 @@ with get_session() as _session:
     current["plan_status"] = _user_row.plan_status
     current["plan_grace_until"] = _user_row.plan_grace_until
     current["timezone"] = _user_row.timezone
+    current["astro_weight"] = _user_row.astro_weight
     st.session_state["user"] = current
 
 theme.apply()  # brand CSS for every authenticated page (pages run below via nav.run())
@@ -208,18 +213,28 @@ with st.sidebar:
                             st.query_params["token"] = auth.mint_session_token(user)
                             st.success("Password updated.")
 
-dashboard = st.Page("pages_/1_Dashboard.py", title="Dashboard", icon=":material/space_dashboard:", default=True)
-ingest = st.Page("pages_/2_Ingest.py", title="Import Profiles", icon=":material/upload_file:")
-profiles = st.Page("pages_/3_Profiles.py", title="Profiles", icon=":material/contacts:")
-matching = st.Page("pages_/4_Matching.py", title="Matchmaking", icon=":material/favorite:")
-astro = st.Page("pages_/5_Astrology.py", title="Horoscope Check", icon=":material/nights_stay:")
-tasks = st.Page("pages_/6_Tasks.py", title="Tasks", icon=":material/task_alt:")
-search = st.Page("pages_/8_Search.py", title="Search & Insights", icon=":material/manage_search:")
-my_plan = st.Page("pages_/9_My_Plan.py", title="My Plan", icon=":material/workspace_premium:")
+dashboard = st.Page(DASHBOARD_PAGE, title="Dashboard", icon=":material/space_dashboard:", default=True)
+my_child = st.Page(MY_CHILD_PAGE, title="My Child", icon=":material/family_restroom:")
+ingest = st.Page(INGEST_PAGE, title="Add Candidates", icon=":material/upload_file:")
+profiles = st.Page(PROFILES_PAGE, title="Candidates", icon=":material/contacts:")
+matching = st.Page(MATCHING_PAGE, title="Match & Compare", icon=":material/favorite:")
+tasks = st.Page(TASKS_PAGE, title="Follow-Ups", icon=":material/task_alt:")
+search = st.Page(SEARCH_PAGE, title="Search & Insights", icon=":material/manage_search:")
+my_plan = st.Page(MY_PLAN_PAGE, title="My Plan", icon=":material/workspace_premium:")
 
-pages = [dashboard, ingest, profiles, matching, astro, tasks, search, my_plan]
+# V4-1-1/V4-2-1: grouped, stepwise navigation — the menu itself teaches the
+# flow. The standalone Horoscope Check page is gone (V4-3) — computing/saving
+# a chart now happens inline on Candidates and Match & Compare instead.
+sections: dict[str, list[st.Page]] = {
+    "Home": [dashboard],
+    "Step 1 · My Child": [my_child],
+    "Step 2 · Candidates": [ingest, profiles],
+    "Step 3 · Match": [matching],
+    "Step 4 · Follow Up": [tasks],
+    "More": [search, my_plan],
+}
 if auth.is_admin(current["role"]):
-    pages.append(st.Page("pages_/7_Users.py", title="Customers", icon=":material/group:"))
+    sections["Admin"] = [st.Page(USERS_PAGE, title="Customers", icon=":material/group:")]
 
-nav = st.navigation(pages)
+nav = st.navigation(sections)
 nav.run()

@@ -8,9 +8,11 @@ from soulmatch import auth, billing, config
 from soulmatch.astrology.engine import AstrologyError, BirthDetails, build_chart, full_compatibility
 from soulmatch.db import get_session
 from soulmatch.extraction.llm import LLMError
-from soulmatch.matching.rules import evaluate_match
+from soulmatch.horoscope_ui import compute_and_save_chart
+from soulmatch.matching.rules import composite_score, evaluate_match, score_band
 from soulmatch.matchview import render_recommendation, render_saved_match_result
 from soulmatch.models import Activity, MatchResult, Profile, User
+from soulmatch.nav import TASKS_PAGE, queue_next_step, show_next_step
 from soulmatch.preferences import CandidatePreferences, filter_candidates
 from soulmatch.recommendation import generate_recommendation
 from soulmatch.tenancy import get_owned, owned, owner_id_of
@@ -158,6 +160,7 @@ def render_match_detail(bride_id: int, groom_id: int, can_write: bool, state_pre
                                        detail=f"vs bride #{bride_id}", created_by_user_id=current_user["id"]))
                 session2.commit()
             flash("Match result saved.")
+            queue_next_step("Add a follow-up task →", TASKS_PAGE)
             st.rerun()
 
 
@@ -166,8 +169,9 @@ owner = owner_id_of(current_user)
 owner_tz = current_user.get("timezone")
 can_write = auth.can_edit(current_user["role"])
 
-theme.page_header("Matchmaking", "Score bride–groom pairs on practical criteria, Vedic compatibility, and AI judgment.")
+theme.page_header("Match & Compare", "Score bride–groom pairs on practical criteria, Vedic compatibility, and AI judgment.")
 show_flash()
+show_next_step()
 if not can_write:
     st.caption("Your account has read-only (Viewer) access — you can evaluate matches but not save results.")
 
@@ -177,11 +181,11 @@ with get_session() as session:
     _saved_match_count = len(session.scalars(owned(select(MatchResult), MatchResult, owner)).all())
 
 if not brides or not grooms:
-    st.info("Need at least one Bride and one Groom profile. Add some via **Import Profiles** or **Profiles**.")
+    st.info("Need at least one Bride and one Groom profile. Add some via **Add Candidates** or **Candidates**.")
     st.stop()
 
-tab_single, tab_seeking, tab_all, tab_saved = st.tabs(
-    ["Check a Specific Pair", "Find Matches for Someone", "Screen All Pairs", f"Saved Matches ({_saved_match_count})"]
+tab_scoreboard, tab_single, tab_all, tab_saved = st.tabs(
+    ["Scoreboard", "Check a Specific Pair", "Screen All Pairs", f"Saved Matches ({_saved_match_count})"]
 )
 
 with tab_single:
@@ -194,13 +198,46 @@ with tab_single:
         "Groom", [p.id for p in grooms],
         format_func=lambda pid: next(f"#{p.id} {p.full_name or 'Unnamed'}" for p in grooms if p.id == pid),
     )
+
+    # V4-3-1b: horoscope compute/save folded in here instead of a standalone
+    # page — a member shouldn't have to leave the match screen to get a chart
+    # for either side of the pair.
+    with get_session() as chart_session:
+        chart_pending = [
+            p for p in (get_owned(chart_session, Profile, bride_id, owner), get_owned(chart_session, Profile, groom_id, owner))
+            if p and not p.horoscope_available
+        ]
+        if chart_pending:
+            names = ", ".join(p.full_name or f"#{p.id}" for p in chart_pending)
+            with st.expander(f"🔯 Compute horoscope — missing for {names}"):
+                for p in chart_pending:
+                    st.markdown(f"**{p.full_name or f'#{p.id}'}**")
+                    compute_and_save_chart(chart_session, owner, current_user, p, key_prefix="matching_single")
+
     render_match_detail(bride_id, groom_id, can_write, "single")
 
-with tab_seeking:
+with tab_scoreboard:
     st.caption(
-        "For when one side is the 'main' profile — e.g. a Bride's family wants to keep her "
-        "horoscope fixed and browse every Groom against it, ranked by compatibility."
+        "Rank every candidate against one 'main' profile — e.g. your child's horoscope stays "
+        "fixed while you browse everyone on the other side, ranked by a blended score."
     )
+
+    # V4-4-1: astro_weight is a per-member preference (stored on User), not a
+    # per-match setting — persisted immediately when the slider moves so it's
+    # remembered next visit.
+    astro_weight = st.slider(
+        "Astrology vs practical weight", 0, 100, current_user.get("astro_weight", 50),
+        key="scoreboard_astro_weight",
+        help="How much the composite score below leans on Vedic compatibility vs practical fit.",
+    )
+    if astro_weight != current_user.get("astro_weight", 50):
+        with get_session() as weight_session:
+            weight_user = weight_session.get(User, current_user["id"])
+            weight_user.astro_weight = astro_weight
+            weight_session.commit()
+        current_user["astro_weight"] = astro_weight
+        st.session_state["user"]["astro_weight"] = astro_weight
+
     seeking_gender = st.radio("Seeking matches for a:", ["Bride", "Groom"], horizontal=True, key="seeking_gender")
     anchor_pool = brides if seeking_gender == "Bride" else grooms
     candidate_pool = grooms if seeking_gender == "Bride" else brides
@@ -311,10 +348,22 @@ with tab_seeking:
     results = st.session_state.get("seeking_results")
     if results and results["anchor_id"] == anchor_id and results["seeking_gender"] == seeking_gender \
             and results["preferences"] == preferences:
-        df = pd.DataFrame(results["rows"]).sort_values(
-            ["Practical Score", "Koota Score"], ascending=False, na_position="last"
+        # Composite/Band are recomputed from the cached Practical/Koota scores
+        # on every render (not baked into the cache) so moving the weight
+        # slider re-ranks instantly without needing "Find best matches" again.
+        df = pd.DataFrame(results["rows"])
+        df["Composite"] = [
+            composite_score(r["Practical Score"], r["Koota Score"], astro_weight) for _, r in df.iterrows()
+        ]
+        df["Band"] = df["Composite"].map(score_band)
+        df = df.sort_values(
+            ["Composite", "Practical Score", "Koota Score"], ascending=False, na_position="last"
         ).reset_index(drop=True)
-        df_display = df.drop(columns=["Candidate ID"]).copy()
+        df_display = df.drop(columns=["Candidate ID"])[
+            ["Band", "Candidate", "Composite", "Practical Score", "Koota Score",
+             "Mandatory OK", "Recommended", "Koota Note"]
+        ].copy()
+        df_display["Composite"] = df_display["Composite"].map(lambda v: f"{v:.1f}" if pd.notna(v) else "—")
         df_display["Koota Score"] = df_display["Koota Score"].map(lambda v: f"{v:.1f}" if pd.notna(v) else "—")
         seeking_event = st.dataframe(
             df_display, width='stretch', hide_index=True,
@@ -334,6 +383,36 @@ with tab_seeking:
                 detail_bride_id, detail_groom_id = candidate_id, anchor_id
             st.divider()
             theme.section(f"Match detail: Bride #{detail_bride_id} × Groom #{detail_groom_id}")
+
+            # V4-4-3: shortlist/reject reuse the existing pipeline stage field —
+            # "shortlisted" isn't a new parallel status, it's the "Interested"
+            # stage already in PIPELINE_STAGES; "reject" archives via "Rejected"
+            # the same way every other page does, so the funnel stays one model.
+            if can_write:
+                sc1, sc2 = st.columns(2)
+                if sc1.button("⭐ Shortlist this candidate", key="scoreboard_shortlist"):
+                    with get_session() as stage_session:
+                        cand = get_owned(stage_session, Profile, candidate_id, owner)
+                        cand.stage = "Interested"
+                        stage_session.add(Activity(
+                            profile_id=candidate_id, owner_user_id=owner, event="Shortlisted",
+                            detail=f"vs #{anchor_id} from Scoreboard", created_by_user_id=current_user["id"],
+                        ))
+                        stage_session.commit()
+                    flash(f"#{candidate_id} shortlisted (moved to Interested).")
+                    st.rerun()
+                if sc2.button("🗄️ Reject", key="scoreboard_reject"):
+                    with get_session() as stage_session:
+                        cand = get_owned(stage_session, Profile, candidate_id, owner)
+                        cand.stage = "Rejected"
+                        stage_session.add(Activity(
+                            profile_id=candidate_id, owner_user_id=owner, event="Rejected",
+                            detail=f"vs #{anchor_id} from Scoreboard", created_by_user_id=current_user["id"],
+                        ))
+                        stage_session.commit()
+                    flash(f"#{candidate_id} archived as Rejected.")
+                    st.rerun()
+
             render_match_detail(detail_bride_id, detail_groom_id, can_write, "seeking")
         elif 2 <= len(selected_rows) <= 3:
             candidate_ids = [int(df.iloc[i]["Candidate ID"]) for i in selected_rows]
@@ -359,7 +438,9 @@ with tab_seeking:
                     value = getattr(cand_profiles.get(cid), attr, None)
                     row[col_label] = str(value) if value not in (None, "") else "—"
                 compare_rows.append(row)
-            for score_label, score_col in (("Practical Score", "Practical Score"), ("Koota Score", "Koota Score")):
+            for score_label, score_col in (
+                ("Composite", "Composite"), ("Practical Score", "Practical Score"), ("Koota Score", "Koota Score"),
+            ):
                 row = {"Field": score_label}
                 for cid, col_label in col_labels.items():
                     match_row = df[df["Candidate ID"] == cid]

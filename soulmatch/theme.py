@@ -273,6 +273,38 @@ hr {{ border: none; border-top: 1px dashed #EBDCC5; margin: 1.6rem 0; }}
     background: linear-gradient(90deg, var(--sm-gold-soft), var(--sm-gold)) !important;
 }}
 
+/* journey stepper (V4-2-2) — horizontal progress strip on the Dashboard */
+.sm-stepper {{
+    display: flex;
+    align-items: stretch;
+    gap: 10px;
+    margin: 4px 0 18px 0;
+}}
+.sm-step {{
+    flex: 1 1 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: #fff;
+    border: 1px solid var(--sm-line);
+    border-radius: 12px;
+    padding: 12px 14px;
+    box-shadow: 0 4px 16px rgba(92,22,48,0.04);
+}}
+.sm-step.done {{ border-color: #D9C79A; background: #FFFDF9; }}
+.sm-step.current {{ border-color: var(--sm-gold); box-shadow: 0 6px 20px rgba(201,162,39,0.18); }}
+.sm-step .badge {{
+    flex: 0 0 auto;
+    width: 28px; height: 28px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font: 700 0.85rem/1 'Inter', sans-serif;
+}}
+.sm-step.done .badge {{ background: var(--sm-gold); color: #fff; }}
+.sm-step.current .badge {{ background: var(--sm-maroon-2); color: #fff; }}
+.sm-step.todo .badge {{ background: var(--sm-cream); color: var(--sm-muted); border: 1px solid var(--sm-line); }}
+.sm-step .label {{ font: 700 0.85rem/1.3 'Inter', sans-serif; color: var(--sm-ink); }}
+.sm-step.todo .label {{ color: var(--sm-muted); }}
+
 /* branded empty state */
 .sm-empty {{
     text-align: center;
@@ -313,6 +345,28 @@ def section(title: str, caption: str | None = None) -> None:
     )
     if caption:
         st.markdown(f'<div class="sm-sec-cap">{caption}</div>', unsafe_allow_html=True)
+
+
+def journey_stepper(steps: list[tuple[bool, str]]) -> None:
+    """V4-2-2: horizontal 4-step progress strip for the Dashboard — one entry
+    per (done, label). The first not-done step is marked "current"; every
+    step after it is "todo". All-done renders every step as "done" (no
+    current highlight needed once the journey is complete)."""
+    current_index = next((i for i, (done, _) in enumerate(steps) if not done), None)
+    html = ['<div class="sm-stepper">']
+    for i, (done, label) in enumerate(steps):
+        if done:
+            state, badge = "done", "✓"
+        elif i == current_index:
+            state, badge = "current", str(i + 1)
+        else:
+            state, badge = "todo", str(i + 1)
+        html.append(
+            f'<div class="sm-step {state}"><span class="badge">{badge}</span>'
+            f'<span class="label">{label}</span></div>'
+        )
+    html.append("</div>")
+    st.markdown("".join(html), unsafe_allow_html=True)
 
 
 def empty_state(title: str, hint: str = "", icon: str = "✦") -> None:

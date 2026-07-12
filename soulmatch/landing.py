@@ -539,7 +539,7 @@ _CTA_FOOTER_HTML = f"""
     private workspace. A product of RedPrana.</div>
   </div>
   <div class="col"><h5>Platform</h5>
-    <div>Profile Import<br/>Matchmaking<br/>Horoscope Check<br/>Search &amp; Insights</div></div>
+    <div>Add Candidates<br/>Match &amp; Compare<br/>Vedic Compatibility<br/>Search &amp; Insights</div></div>
   <div class="col"><h5>Workflow</h5>
     <div>Dashboard<br/>Pipeline Tracking<br/>Tasks &amp; Reminders<br/>My Plan</div></div>
   <div class="col"><h5>Trust</h5>

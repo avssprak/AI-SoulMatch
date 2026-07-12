@@ -18,7 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .matching.rules import MatchOutcome, evaluate_match
-from .models import Activity, MatchResult, Profile
+from .models import Activity, MatchResult, Profile, Task
 from .tenancy import get_owned, owned
 
 IMPORTANT_FIELDS = [
@@ -72,6 +72,44 @@ def stale_cases(session: Session, owner_id: int, *, days: int = 14, today: date 
 
     stale = []
     for p in profiles:
+        last_activity = session.scalar(
+            select(Activity.created_at)
+            .where(Activity.profile_id == p.id)
+            .order_by(Activity.created_at.desc())
+            .limit(1)
+        )
+        reference = last_activity.date() if last_activity else p.created_at.date()
+        if reference < cutoff:
+            stale.append(p)
+    stale.sort(key=lambda p: p.created_at)
+    return stale
+
+
+# V4-5-3: shortlisting is the "Interested" stage (see pages_/4_Matching.py
+# Scoreboard's Shortlist button) — a narrower, more actionable nudge than
+# stale_cases() above, since it only flags candidates the member has
+# already decided to pursue and then gone quiet on.
+SHORTLIST_STAGE = "Interested"
+
+
+def stale_shortlisted(session: Session, owner_id: int, *, days: int = 7, today: date | None = None) -> list[Profile]:
+    """Shortlisted (stage == "Interested") profiles with no open task and no
+    logged activity in `days` days — these are the ones a member meant to
+    act on and then forgot."""
+    today = today or date.today()
+    cutoff = today - timedelta(days=days)
+
+    profiles = session.scalars(
+        owned(select(Profile).where(Profile.stage == SHORTLIST_STAGE), Profile, owner_id)
+    ).all()
+
+    stale = []
+    for p in profiles:
+        has_open_task = session.scalar(
+            select(Task.id).where(Task.profile_id == p.id, Task.status == "Pending").limit(1)
+        ) is not None
+        if has_open_task:
+            continue
         last_activity = session.scalar(
             select(Activity.created_at)
             .where(Activity.profile_id == p.id)

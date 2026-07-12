@@ -155,3 +155,34 @@ def evaluate_match(bride: Profile, groom: Profile, rules: list[Rule] | None = No
             outcome.missing_fields.append(field_name)
 
     return outcome
+
+
+KOOTA_MAX = 36.0
+
+
+def composite_score(practical_score: float | None, koota_total: float | None, astro_weight: int) -> float | None:
+    """V4-4-1 Scoreboard composite: `astro_weight`% (0-100, a member
+    preference — see User.astro_weight) of the astrology score (koota_total
+    out of 36, converted to a percentage) blended with the rest as the
+    practical score. Falls back to whichever single score is available; None
+    only when neither is."""
+    if practical_score is None and koota_total is None:
+        return None
+    if koota_total is None:
+        return practical_score
+    if practical_score is None:
+        return round(100 * koota_total / KOOTA_MAX, 1)
+    astro_pct = 100 * koota_total / KOOTA_MAX
+    weight = astro_weight / 100
+    return round(weight * astro_pct + (1 - weight) * practical_score, 1)
+
+
+def score_band(score: float | None) -> str:
+    """Red/amber/green threshold label for the Scoreboard (V4-4-2)."""
+    if score is None:
+        return "—"
+    if score >= 70:
+        return "🟢"
+    if score >= 40:
+        return "🟡"
+    return "🔴"

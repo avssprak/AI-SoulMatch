@@ -6,16 +6,18 @@ from sqlalchemy import select
 
 from soulmatch import auth, theme
 from soulmatch.db import get_session
-from soulmatch.insights import stale_cases
-from soulmatch.models import PIPELINE_STAGE_GROUPS, Activity, MatchResult, Profile, RawMessage
-from soulmatch.nav import SEARCH_PAGE, TASKS_OVERDUE_PREF_KEY, TASKS_PAGE, open_profile_button
+from soulmatch.insights import stale_cases, stale_shortlisted
+from soulmatch.models import PIPELINE_STAGE_GROUPS, Activity, MatchResult, Profile, RawMessage, Task
+from soulmatch.nav import (
+    INGEST_PAGE, MATCHING_PAGE, MY_CHILD_PAGE, PROFILES_PAGE, SEARCH_PAGE,
+    TASKS_OVERDUE_PREF_KEY, TASKS_PAGE, open_profile_button,
+)
 from soulmatch.tasks import overdue_tasks, pending_tasks
 from soulmatch.tenancy import owned, owner_id_of
 from soulmatch.timezones import to_local
 
 user = auth.require_login()
 owner = owner_id_of(user)
-theme.page_header("Dashboard", "Your child's search at a glance — proposals in play, follow-ups, and match activity.")
 
 with get_session() as session:
     profiles = session.scalars(owned(select(Profile), Profile, owner)).all()
@@ -26,15 +28,25 @@ with get_session() as session:
     pending_task_count = len(pending_tasks(session, owner))
     overdue_task_count = len(overdue_tasks(session, owner))
     stale_case_count = len(stale_cases(session, owner))
+    stale_shortlist_count = len(stale_shortlisted(session, owner))
     unprocessed_count = len(session.scalars(
         owned(select(RawMessage).where(RawMessage.processed.is_(False)), RawMessage, owner)
     ).all())
+    any_task_exists = session.scalar(owned(select(Task.id), Task, owner).limit(1)) is not None
 
     profile_ids = {a.profile_id for a in recent_activity}
     activity_profile_names = {
         p.id: p.full_name
         for p in session.scalars(owned(select(Profile).where(Profile.id.in_(profile_ids)), Profile, owner)).all()
     }
+
+child = next((p for p in profiles if getattr(p, "is_own_child", False)), None)
+theme.page_header(
+    "Dashboard",
+    f"{child.full_name}'s search at a glance — proposals in play, follow-ups, and match activity."
+    if child and child.full_name else
+    "Your child's search at a glance — proposals in play, follow-ups, and match activity.",
+)
 
 total = len(profiles)
 brides = sum(1 for p in profiles if p.gender == "Bride")
@@ -52,10 +64,15 @@ if overdue_task_count:
     today_items.append((f"⚠️ {overdue_task_count} overdue task(s)", "dash_today_tasks", TASKS_PAGE))
 if unprocessed_count:
     today_items.append((f"📥 {unprocessed_count} imported message(s) waiting to be processed",
-                         "dash_today_ingest", "pages_/2_Ingest.py"))
+                         "dash_today_ingest", INGEST_PAGE))
 if pending_horoscope_count:
-    today_items.append((f"🔯 {pending_horoscope_count} profile(s) missing a horoscope",
-                         "dash_today_astro", "pages_/5_Astrology.py"))
+    today_items.append((f"🔯 {pending_horoscope_count} candidate(s) missing a horoscope",
+                         "dash_today_astro", PROFILES_PAGE))
+if stale_shortlist_count:
+    today_items.append((
+        f"⭐ {stale_shortlist_count} shortlisted candidate(s) waiting on you — no follow-up in 7+ days",
+        "dash_today_shortlist_stale", PROFILES_PAGE,
+    ))
 if stale_case_count:
     today_items.append((f"💤 {stale_case_count} stale case(s) — no activity in 14+ days",
                          "dash_today_stale", SEARCH_PAGE))
@@ -75,11 +92,11 @@ st.divider()
 
 row1 = st.columns(4)
 row1[0].metric("Active Cases", active_cases)
-if row1[0].button("Open Profiles →", key="dash_open_profiles"):
-    st.switch_page("pages_/3_Profiles.py")
+if row1[0].button("Open Candidates →", key="dash_open_profiles"):
+    st.switch_page(PROFILES_PAGE)
 row1[1].metric("Pending Horoscope", pending_horoscope_count)
 if row1[1].button("Compute & save a chart →", key="dash_open_astro"):
-    st.switch_page("pages_/5_Astrology.py")
+    st.switch_page(PROFILES_PAGE)
 row1[2].metric("Overdue Tasks", overdue_task_count)
 if row1[2].button("Open overdue tasks →", key="dash_overdue_tasks"):
     st.session_state[TASKS_OVERDUE_PREF_KEY] = True
@@ -89,7 +106,7 @@ if row1[3].button("See Quick Insights →", key="dash_open_insights"):
     st.switch_page(SEARCH_PAGE)
 
 row2 = st.columns(4)
-row2[0].metric("Total Profiles", total)
+row2[0].metric("Total Candidates", total)
 row2[1].metric("Brides", brides)
 row2[2].metric("Grooms", grooms)
 row2[3].metric("Marriages", marriages)
@@ -97,26 +114,34 @@ st.caption(f"Pending Tasks: {pending_task_count}")
 
 st.divider()
 
-if total < 3:
-    # V3-6-3: member-framed 3-step path to the "wow" moment — replaces the
-    # old operator-framed checklist (it referenced LLM config, which means
-    # nothing to a parent managing a search). Each step checks off from
-    # real data, not a session flag.
-    theme.section("Get started", "Three steps from a messy WhatsApp chat to your first compatibility score.")
-    has_child = any(getattr(p, "is_own_child", False) for p in profiles)
-    candidate_count = total - (1 if has_child else 0)
-    has_koota_match = any(m.koota_total is not None for m in matches)
-    checklist = [
-        (has_child, "Mark or add your child's profile", "pages_/3_Profiles.py"),
-        (candidate_count > 0, "Import a WhatsApp chat or paste a biodata for a candidate", "pages_/2_Ingest.py"),
-        (has_koota_match, "Run your first horoscope match", "pages_/4_Matching.py"),
-    ]
-    for i, (done, label, target) in enumerate(checklist):
-        c1, c2 = st.columns([5, 2])
-        c1.markdown(("✅ " if done else "⬜ ") + label)
-        if not done and target and c2.button("Go →", key=f"onboarding_go_{i}"):
-            st.switch_page(target)
+# V4-2-2/V4-2-3: always-visible 4-step journey strip — replaces the old
+# `total < 3` gated checklist (V3-6-3). Every step checks off from real data,
+# not a session flag, so it stays honest even if a member deletes everything
+# back down to zero.
+has_child = child is not None
+candidate_count = total - (1 if has_child else 0)
+has_match = len(matches) > 0
+journey_steps = [
+    (has_child, "My Child", MY_CHILD_PAGE, "Set up your child's prime profile"),
+    (candidate_count > 0, "Candidates", INGEST_PAGE, "Add a candidate — a WhatsApp chat or a pasted biodata"),
+    (has_match, "Match", MATCHING_PAGE, "Run your first horoscope match"),
+    (any_task_exists, "Follow Up", TASKS_PAGE, "Add a follow-up task for a candidate you're pursuing"),
+]
+theme.section("Your journey")
+theme.journey_stepper([(done, label) for done, label, _, _ in journey_steps])
+current_step = next(((label, target, cta) for done, label, target, cta in journey_steps if not done), None)
+if current_step:
+    label, target, cta = current_step
+    sc1, sc2 = st.columns([5, 2])
+    sc1.markdown(f"**Next: {label}** — {cta}")
+    if sc2.button("Go →", key="journey_current_step_go"):
+        st.switch_page(target)
 else:
+    st.caption("🎉 You've completed every step of the journey — keep going below.")
+
+st.divider()
+
+if total >= 3:
     col1, col2 = st.columns(2)
 
     with col1:
@@ -178,7 +203,7 @@ else:
             fig.update_traces(marker_line_width=0, marker_cornerradius=4)
             st.plotly_chart(theme.brand_chart(fig), width='stretch')
         else:
-            theme.empty_state("No matches computed yet", "Run your first match under Matchmaking.", icon="💘")
+            theme.empty_state("No matches computed yet", "Run your first match under Match & Compare.", icon="💘")
 
 st.divider()
 theme.section("Recent Activity")

@@ -1,4 +1,4 @@
-from soulmatch.matching.rules import evaluate_match
+from soulmatch.matching.rules import composite_score, evaluate_match, score_band
 from soulmatch.models import Profile
 
 
@@ -43,3 +43,35 @@ def test_missing_fields_are_skipped_not_failed():
     height_result = next(r for r in outcome.results if r.name == "Height")
     assert height_result.passed
     assert "height_cm" in outcome.missing_fields
+
+
+def test_composite_score_blends_both_at_50_50():
+    # 80% practical, 18/36 koota (=50%) at a 50/50 weight -> 65
+    assert composite_score(80.0, 18.0, 50) == 65.0
+
+
+def test_composite_score_all_astrology_weight():
+    assert composite_score(0.0, 36.0, 100) == 100.0
+
+
+def test_composite_score_all_practical_weight():
+    assert composite_score(80.0, 36.0, 0) == 80.0
+
+
+def test_composite_score_falls_back_to_practical_when_no_koota():
+    assert composite_score(72.0, None, 50) == 72.0
+
+
+def test_composite_score_falls_back_to_astro_when_no_practical():
+    assert composite_score(None, 18.0, 50) == 50.0
+
+
+def test_composite_score_none_when_both_missing():
+    assert composite_score(None, None, 50) is None
+
+
+def test_score_band_thresholds():
+    assert score_band(70) == "🟢"
+    assert score_band(40) == "🟡"
+    assert score_band(39.9) == "🔴"
+    assert score_band(None) == "—"

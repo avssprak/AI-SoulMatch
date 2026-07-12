@@ -37,6 +37,8 @@ _COLUMN_MIGRATIONS = [
     # V3-6 NRI polish & "my children" (see V3_PLAN.md Sprint V3-6)
     ("profiles", "is_own_child", "BOOLEAN DEFAULT 0"),
     ("users", "timezone", "VARCHAR(64) DEFAULT 'Asia/Kolkata'"),
+    # V4-4-1 composite Scoreboard weight (see V4_PLAN.md Sprint V4-4)
+    ("users", "astro_weight", "INTEGER DEFAULT 50"),
 ]
 
 _TENANT_TABLES = ["raw_messages", "profiles", "documents", "match_results", "activities", "tasks"]
