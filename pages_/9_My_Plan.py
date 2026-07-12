@@ -13,12 +13,14 @@ from soulmatch import auth, billing, config, payments, theme
 from soulmatch.db import get_session
 from soulmatch.export import delete_owner_account, export_owner_data_zip
 from soulmatch.tenancy import owner_id_of
+from soulmatch.timezones import COMMON_TIMEZONES, DEFAULT_TIMEZONE
 
 current_user = auth.require_login()
 owner = owner_id_of(current_user)
 plan = current_user.get("plan", "free")  # effective plan (paused -> "free")
 actual_plan = current_user.get("actual_plan", plan)
 plan_status = current_user.get("plan_status", "free")
+current_timezone = current_user.get("timezone", DEFAULT_TIMEZONE)
 
 theme.page_header("My Plan", "Your subscription, AI-action usage, and what each plan includes.")
 
@@ -43,6 +45,23 @@ with c2:
             f"You've used all {status.limit} AI actions this month — upgrade below or wait "
             f"until {status.resets_on:%d %b} for the reset."
         )
+
+tz_options = COMMON_TIMEZONES if current_timezone in COMMON_TIMEZONES else [current_timezone, *COMMON_TIMEZONES]
+new_timezone = st.selectbox(
+    "Your timezone", tz_options, index=tz_options.index(current_timezone),
+    help="Dates and times across the app are shown in this timezone. Data is always stored in UTC.",
+)
+if new_timezone != current_timezone:
+    with get_session() as session:
+        user_row = session.get(auth.User, owner)
+        user_row.timezone = new_timezone
+        session.commit()
+    # Also update the session copy — app.py only refreshes it on full page
+    # loads, and rerunning with a stale value here would loop forever.
+    current_user["timezone"] = new_timezone
+    st.session_state["user"] = current_user
+    st.success(f"Timezone updated to {new_timezone}.")
+    st.rerun()
 
 if actual_plan != "free" and plan_status == "active":
     if st.button("Pause subscription", help="Stops billing at the end of your current period. "

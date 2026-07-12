@@ -152,6 +152,28 @@ def can_add_profile(session: Session, user: dict) -> tuple[bool, str]:
     return True, ""
 
 
+def can_mark_own_child(session: Session, user: dict) -> tuple[bool, str]:
+    """Whether this owner may mark one more Profile as their own child
+    (V3-6-1), under their plan's cap. Only call when a profile is being
+    newly marked (False -> True) — unmarking is always allowed regardless
+    of the cap."""
+    limit = limits_for(user.get("plan", "free"))["children"]
+    if limit is None:
+        return True, ""
+    owner_id = user["id"]
+    count = session.scalar(
+        select(func.count()).select_from(
+            owned(select(Profile.id).where(Profile.is_own_child.is_(True)), Profile, owner_id).subquery()
+        )
+    ) or 0
+    if count >= limit:
+        return False, (
+            f"Your plan allows marking up to {limit} child profile(s) as your own — "
+            "upgrade for more."
+        )
+    return True, ""
+
+
 def monthly_usage_summary(session: Session, *, today: date | None = None) -> dict:
     """Admin-only: this month's total cost and breakdown by action, plus the
     top-5 heaviest users by cost. See pages_/7_Users.py."""

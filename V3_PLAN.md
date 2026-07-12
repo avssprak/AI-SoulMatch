@@ -164,9 +164,12 @@ then list the exact `[HUMAN]` steps left in your final report.
 ## Part 2 — Sprints
 
 Execute strictly in order — each sprint builds on the previous one's schema
-and helpers. **Next up: V3-6.** Work task-by-task, verify per Part 1.5 after
-each task, and end every session by updating the sprint's status line here
-(✅ DONE date, or a "partially done: …" note listing exactly what remains).
+and helpers. **All code sprints (V3-1 … V3-6) are DONE as of 2026-07-12.**
+What remains is entirely `[HUMAN]`: gateway accounts + webhook secrets
+(V3-3), VPS + DNS + deploy (V3-4, docs/DEPLOY.md), legal review (V3-5),
+and the private beta itself (V3-6-4). Any future code session should treat
+Part 1.5 as the handoff brief and V2_PLAN.md's remaining items or a new V4
+plan as the next backlog.
 
 ### Sprint V3-1 — Tenant isolation & the Member role  *(the foundation; nothing ships before this)* — ✅ DONE 2026-07-12
 
@@ -438,7 +441,20 @@ happens).
   ZIP completeness (every owned row present, zero foreign rows — this is
   also a tenancy test).
 
-### Sprint V3-6 — NRI polish, "my children", & beta launch
+### Sprint V3-6 — NRI polish, "my children", & beta launch — ✅ CODE DONE 2026-07-12 (V3-6-4 beta is [HUMAN])
+
+**Implementation notes:** `profiles.is_own_child` + `users.timezone` exist
+(models + `_COLUMN_MIGRATIONS`, verified against a real DB snapshot).
+Child toggle lives on the Profiles header card (`👶 This is my child`),
+capped via `billing.can_mark_own_child` (unmarking never capped); the
+Matching "seeking" anchor defaults to the marked child. Timezone display
+goes through `soulmatch/timezones.py` `to_local()` (storage stays UTC;
+unknown zones fall back to Asia/Kolkata) with a picker on My Plan —
+note the fixed rerun-loop bug there: any page that writes a field also
+mirrored in the session user dict MUST update `st.session_state["user"]`
+before `st.rerun()`, since app.py only refreshes it on full page loads.
+Dashboard onboarding is now the member-framed 3-step path (mark child →
+import chat → first koota match), checked off from real data.
 
 - **V3-6-1** The "children" concept (deferred from V3-2-3): lightweight —
   add `profiles.is_own_child Boolean default False` (+ migration). The

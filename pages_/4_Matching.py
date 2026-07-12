@@ -14,6 +14,7 @@ from soulmatch.models import Activity, MatchResult, Profile, User
 from soulmatch.preferences import CandidatePreferences, filter_candidates
 from soulmatch.recommendation import generate_recommendation
 from soulmatch.tenancy import get_owned, owned, owner_id_of
+from soulmatch.timezones import to_local
 from soulmatch import theme
 from soulmatch.ui import flash, show_flash
 
@@ -162,6 +163,7 @@ def render_match_detail(bride_id: int, groom_id: int, can_write: bool, state_pre
 
 current_user = auth.require_login()
 owner = owner_id_of(current_user)
+owner_tz = current_user.get("timezone")
 can_write = auth.can_edit(current_user["role"])
 
 theme.page_header("Matchmaking", "Score bride–groom pairs on practical criteria, Vedic compatibility, and AI judgment.")
@@ -204,9 +206,16 @@ with tab_seeking:
     candidate_pool = grooms if seeking_gender == "Bride" else brides
     opposite_label = "Groom" if seeking_gender == "Bride" else "Bride"
 
+    # V3-6-1: default the anchor to the member's own child profile, if
+    # they've marked one matching this gender — that's almost always who
+    # "the main profile" means here.
+    anchor_options = [p.id for p in anchor_pool]
+    child_ids = [p.id for p in anchor_pool if getattr(p, "is_own_child", False)]
+    default_anchor_index = anchor_options.index(child_ids[0]) if child_ids else 0
     anchor_id = st.selectbox(
         f"Which {seeking_gender.lower()} is the main profile?",
-        [p.id for p in anchor_pool],
+        anchor_options,
+        index=default_anchor_index,
         format_func=lambda pid: next(f"#{p.id} {p.full_name or 'Unnamed'}" for p in anchor_pool if p.id == pid),
         key="seeking_anchor_id",
     )
@@ -429,7 +438,7 @@ with tab_saved:
             "Practical %": m.practical_score,
             "Koota": f"{m.koota_total:.1f}" if m.koota_total is not None else "—",
             "Recommendation": m.recommendation or "—",
-            "Saved": m.created_at.strftime("%d %b %Y"),
+            "Saved": to_local(m.created_at, owner_tz).strftime("%d %b %Y"),
             "By": actor_names.get(m.created_by_user_id, "—"),
         } for m in saved_matches]
         st.caption(f"{len(rows)} saved match result(s)")
@@ -449,7 +458,7 @@ with tab_saved:
                 groom = get_owned(session, Profile, mr.groom_id, owner) if mr else None
             if mr:
                 st.divider()
-                render_saved_match_result(mr, bride, groom)
+                render_saved_match_result(mr, bride, groom, tz_name=owner_tz)
 
                 if can_write:
                     confirm_key = f"confirm_delete_match_{mr.id}"

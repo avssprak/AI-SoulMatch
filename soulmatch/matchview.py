@@ -15,6 +15,7 @@ import pandas as pd
 import streamlit as st
 
 from .models import MatchResult, Profile
+from .timezones import to_local
 
 
 def render_recommendation(recommendation: dict) -> None:
@@ -52,7 +53,9 @@ def render_recommendation(recommendation: dict) -> None:
     st.caption(f"Generated via {recommendation.get('_provider', 'unknown')} AI service")
 
 
-def render_saved_match_result(mr: MatchResult, bride: Profile | None, groom: Profile | None) -> None:
+def render_saved_match_result(
+    mr: MatchResult, bride: Profile | None, groom: Profile | None, tz_name: str | None = None,
+) -> None:
     """Render a previously-saved MatchResult's full stored detail —
     practical strengths/weaknesses, koota breakdown, dosha flags, and the
     stored AI recommendation JSON — reconstructed entirely from what was
@@ -100,7 +103,7 @@ def render_saved_match_result(mr: MatchResult, bride: Profile | None, groom: Pro
         render_recommendation(recommendation)
 
     st.caption(
-        f"Saved {mr.created_at:%d %b %Y, %H:%M} — "
+        f"Saved {to_local(mr.created_at, tz_name):%d %b %Y, %H:%M} — "
         f"Bride #{mr.bride_id} {bride.full_name if bride else 'Unknown'} × "
         f"Groom #{mr.groom_id} {groom.full_name if groom else 'Unknown'}"
     )

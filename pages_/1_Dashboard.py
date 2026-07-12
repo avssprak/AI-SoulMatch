@@ -4,13 +4,14 @@ import plotly.graph_objects as go
 import streamlit as st
 from sqlalchemy import select
 
-from soulmatch import auth, config, theme
+from soulmatch import auth, theme
 from soulmatch.db import get_session
 from soulmatch.insights import stale_cases
 from soulmatch.models import PIPELINE_STAGE_GROUPS, Activity, MatchResult, Profile, RawMessage
 from soulmatch.nav import SEARCH_PAGE, TASKS_OVERDUE_PREF_KEY, TASKS_PAGE, open_profile_button
 from soulmatch.tasks import overdue_tasks, pending_tasks
 from soulmatch.tenancy import owned, owner_id_of
+from soulmatch.timezones import to_local
 
 user = auth.require_login()
 owner = owner_id_of(user)
@@ -97,14 +98,18 @@ st.caption(f"Pending Tasks: {pending_task_count}")
 st.divider()
 
 if total < 3:
-    theme.section("Getting started", "A few profiles help the charts below mean something — here's the usual first path.")
-    ai_configured = config.LLM_PROVIDER != "mock"
+    # V3-6-3: member-framed 3-step path to the "wow" moment — replaces the
+    # old operator-framed checklist (it referenced LLM config, which means
+    # nothing to a parent managing a search). Each step checks off from
+    # real data, not a session flag.
+    theme.section("Get started", "Three steps from a messy WhatsApp chat to your first compatibility score.")
+    has_child = any(getattr(p, "is_own_child", False) for p in profiles)
+    candidate_count = total - (1 if has_child else 0)
+    has_koota_match = any(m.koota_total is not None for m in matches)
     checklist = [
-        (ai_configured, "Connect a real AI service (currently offline/mock)" if not ai_configured
-         else "AI service connected", "pages_/2_Ingest.py" if not ai_configured else None),
-        (total > 0, "Import a WhatsApp export or document and extract a profile", "pages_/2_Ingest.py"),
-        (any(p.horoscope_available for p in profiles), "Compute a horoscope chart for a profile", "pages_/5_Astrology.py"),
-        (len(matches) > 0, "Run your first match", "pages_/4_Matching.py"),
+        (has_child, "Mark or add your child's profile", "pages_/3_Profiles.py"),
+        (candidate_count > 0, "Import a WhatsApp chat or paste a biodata for a candidate", "pages_/2_Ingest.py"),
+        (has_koota_match, "Run your first horoscope match", "pages_/4_Matching.py"),
     ]
     for i, (done, label, target) in enumerate(checklist):
         c1, c2 = st.columns([5, 2])
@@ -182,7 +187,7 @@ if recent_activity:
         name = activity_profile_names.get(a.profile_id) or "Unnamed"
         ac1, ac2 = st.columns([6, 1])
         ac1.markdown(
-            f"**{a.created_at:%d %b, %H:%M}** — {a.event} · {name} (#{a.profile_id})"
+            f"**{to_local(a.created_at, user.get('timezone')):%d %b, %H:%M}** — {a.event} · {name} (#{a.profile_id})"
             + (f": {a.detail}" if a.detail else "")
         )
         open_profile_button(a.profile_id, label="Open", key=f"dash_open_{a.id}")

@@ -20,6 +20,7 @@ from soulmatch.profiles import age_from_dob, delete_profile, is_match_ready, pro
 from soulmatch.search import describe_filters, parse_query
 from soulmatch.summary import profile_summary_html
 from soulmatch.tenancy import get_owned, owned, owner_id_of
+from soulmatch.timezones import to_local
 from soulmatch import theme
 from soulmatch.ui import check_upload_size, flash, show_flash, stage_badge
 
@@ -62,6 +63,7 @@ def _print_summary_dialog(profile: Profile, photo_bytes: bytes | None) -> None:
 
 current_user = auth.require_login()
 owner = owner_id_of(current_user)
+owner_tz = current_user.get("timezone")
 can_write = auth.can_edit(current_user["role"])
 
 theme.page_header("Profiles", "Every bride and groom in your practice — browse, edit, and track each case.")
@@ -290,7 +292,8 @@ with tab_search:
                     else:
                         st.caption("📷 No photo yet — add one under Documents.")
                 with hcol2:
-                    st.markdown(f"### #{profile.id} — {profile.full_name or 'Unnamed'}  {stage_badge(profile.stage)}")
+                    child_badge = "  👶 :violet-badge[My Child]" if profile.is_own_child else ""
+                    st.markdown(f"### #{profile.id} — {profile.full_name or 'Unnamed'}  {stage_badge(profile.stage)}{child_badge}")
                     st.caption(
                         f"{profile.gender or '—'} · Age {profile.age or '—'} · "
                         f"{profile.current_location or 'Location not set'} · {profile.phone or 'No phone on file'}"
@@ -305,6 +308,27 @@ with tab_search:
                         "✅ Match-ready — has date, time & place of birth" if match_ready
                         else "⚠️ Not match-ready — add date, time & place of birth for a full astrology score"
                     )
+                    if can_write:
+                        # V3-6-1: "my children" is a flag on Profile, not a separate
+                        # entity — this is the son/daughter the member is searching a
+                        # match for, as opposed to a candidate. Capped per plan.
+                        new_child_flag = st.checkbox(
+                            "👶 This is my child (not a candidate)", value=profile.is_own_child,
+                            key=f"is_own_child_{profile.id}",
+                        )
+                        if new_child_flag != profile.is_own_child:
+                            if not new_child_flag:
+                                profile.is_own_child = False
+                                session.commit()
+                                st.rerun()
+                            else:
+                                can_mark, cap_message = billing.can_mark_own_child(session, current_user)
+                                if not can_mark:
+                                    st.warning(cap_message)
+                                else:
+                                    profile.is_own_child = True
+                                    session.commit()
+                                    st.rerun()
                     if st.button("📄 Print / download summary", key=f"print_summary_{profile.id}"):
                         photo_bytes = None
                         if photo_doc:
@@ -555,7 +579,7 @@ with tab_search:
                         other = other_profiles.get(other_id)
                         other_name = other.full_name or "Unnamed" if other else "deleted profile"
                         score = f"{mr.koota_total:.1f}/36" if mr.koota_total is not None else f"{mr.practical_score or 0:.0f}%"
-                        return f"#{other_id} {other_name} — {score} — {mr.created_at:%d %b %Y}"
+                        return f"#{other_id} {other_name} — {score} — {to_local(mr.created_at, owner_tz):%d %b %Y}"
 
                     match_options = {mr.id: _match_option_label(mr) for mr in profile_matches}
                     picked_match_id = st.selectbox(
@@ -569,7 +593,7 @@ with tab_search:
                     bride = profile if picked_match.bride_id == profile.id else other_profiles.get(other_id)
                     groom = profile if picked_match.groom_id == profile.id else other_profiles.get(other_id)
                     st.divider()
-                    render_saved_match_result(picked_match, bride, groom)
+                    render_saved_match_result(picked_match, bride, groom, tz_name=owner_tz)
 
             with tab_history:
                 theme.section("Activity Timeline")
@@ -584,7 +608,7 @@ with tab_search:
                 for a in activities:
                     who = f" by {actor_names[a.created_by_user_id]}" if a.created_by_user_id in actor_names else ""
                     st.markdown(
-                        f"**{a.created_at:%d %b %Y, %H:%M}** — {a.event}{who}" + (f": {a.detail}" if a.detail else "")
+                        f"**{to_local(a.created_at, owner_tz):%d %b %Y, %H:%M}** — {a.event}{who}" + (f": {a.detail}" if a.detail else "")
                     )
 
                 if can_write:
@@ -623,7 +647,17 @@ with tab_search:
                                 st.session_state[confirm_key] = True
                                 st.rerun()
     else:
-        st.info("No profiles match these filters.")
+        with get_session() as _empty_check_session:
+            any_profile_exists = _empty_check_session.scalar(
+                owned(select(Profile.id), Profile, owner).limit(1)
+            ) is not None
+        if any_profile_exists:
+            st.info("No profiles match these filters.")
+        else:
+            st.info(
+                "No profiles yet — head to **Import Profiles** to bring in a WhatsApp chat or "
+                "biodata, or use the **Add Manually** tab below."
+            )
 
 with tab_manual:
     if not can_write:
@@ -637,7 +671,10 @@ with tab_manual:
             age = c3.number_input("Age*", 18, 80, 25)
 
             c1, c2, c3 = st.columns(3)
-            phone = c1.text_input("Phone")
+            phone = c1.text_input(
+                "Phone", placeholder="+1 555 0100 or +91 98765 43210",
+                help="Include the country code for NRI numbers — not validated, since data often arrives messy from chats.",
+            )
             dob_input = c2.date_input("Date of Birth", value=None, min_value=date(1930, 1, 1), max_value=date.today())
             current_location = c3.text_input("Current Location")
 
@@ -723,9 +760,9 @@ with tab_duplicates:
                 st.markdown("; ".join(pair.reasons))
                 c1, c2 = st.columns(2)
                 c1.markdown(f"**#{a.id} {a.full_name or 'Unnamed'}**")
-                c1.caption(f"Created {a.created_at:%d %b %Y} · Stage: {a.stage}")
+                c1.caption(f"Created {to_local(a.created_at, owner_tz):%d %b %Y} · Stage: {a.stage}")
                 c2.markdown(f"**#{b.id} {b.full_name or 'Unnamed'}**")
-                c2.caption(f"Created {b.created_at:%d %b %Y} · Stage: {b.stage}")
+                c2.caption(f"Created {to_local(b.created_at, owner_tz):%d %b %Y} · Stage: {b.stage}")
 
                 if can_write:
                     with st.container(horizontal=True):

@@ -250,3 +250,46 @@ def test_pause_and_resume_subscription():
     billing.resume_subscription(session, user)
     assert user.plan_status == "active"
     assert user.plan == "pro"
+
+
+# --- V3-6-1 "my children" cap ------------------------------------------------
+
+def test_can_mark_own_child_below_cap():
+    session = _memory_session()
+    _seed_users(session)
+    ok, message = billing.can_mark_own_child(session, {"id": OWNER, "plan": "free"})
+    assert ok is True and message == ""
+
+
+def test_can_mark_own_child_at_cap():
+    session = _memory_session()
+    _seed_users(session)
+    session.add(Profile(owner_user_id=OWNER, full_name="My Kid", gender="Bride", is_own_child=True))
+    session.commit()
+    ok, message = billing.can_mark_own_child(session, {"id": OWNER, "plan": "free"})
+    assert ok is False
+    assert "1" in message
+
+
+def test_can_mark_own_child_pro_allows_three():
+    session = _memory_session()
+    _seed_users(session)
+    for i in range(2):
+        session.add(Profile(owner_user_id=OWNER, full_name=f"Kid {i}", gender="Bride", is_own_child=True))
+    session.commit()
+    user = {"id": OWNER, "plan": "pro"}
+    ok, _ = billing.can_mark_own_child(session, user)
+    assert ok is True  # 2 of 3 used
+    session.add(Profile(owner_user_id=OWNER, full_name="Kid 3", gender="Groom", is_own_child=True))
+    session.commit()
+    ok, _ = billing.can_mark_own_child(session, user)
+    assert ok is False  # 3 of 3 used
+
+
+def test_can_mark_own_child_scoped_to_owner():
+    session = _memory_session()
+    _seed_users(session)
+    session.add(Profile(owner_user_id=OTHER, full_name="Other Kid", gender="Bride", is_own_child=True))
+    session.commit()
+    ok, _ = billing.can_mark_own_child(session, {"id": OWNER, "plan": "free"})
+    assert ok is True  # OTHER's child must not count against OWNER's cap

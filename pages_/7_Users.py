@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 from soulmatch import auth, billing, theme
 from soulmatch.db import get_session
 from soulmatch.models import PLANS, Profile, User
+from soulmatch.timezones import to_local
 from soulmatch.ui import flash, show_flash
 
 current_user = auth.require_admin()
@@ -40,8 +41,8 @@ rows = [{
     "ID": u.id, "Email / Username": u.email or u.username, "Name": u.full_name or "—",
     "Role": u.role, "Plan": u.plan, "Profiles": profile_counts.get(u.id, 0),
     "Active": "Yes" if u.is_active else "No",
-    "Joined": u.created_at.strftime("%d %b %Y") if u.created_at else "—",
-    "Last Login": u.last_login.strftime("%d %b %Y %H:%M") if u.last_login else "Never",
+    "Joined": to_local(u.created_at, current_user.get("timezone")).strftime("%d %b %Y") if u.created_at else "—",
+    "Last Login": to_local(u.last_login, current_user.get("timezone")).strftime("%d %b %Y %H:%M") if u.last_login else "Never",
 } for u in users]
 st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 

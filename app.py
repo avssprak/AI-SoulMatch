@@ -5,6 +5,7 @@ import streamlit as st
 from soulmatch import auth, billing, landing, legal, theme
 from soulmatch.db import get_session, init_db
 from soulmatch.errors import init_error_reporting
+from soulmatch.timezones import to_local
 
 
 @st.dialog("Privacy Policy")
@@ -147,6 +148,7 @@ with get_session() as _session:
     current["actual_plan"] = _user_row.plan
     current["plan_status"] = _user_row.plan_status
     current["plan_grace_until"] = _user_row.plan_grace_until
+    current["timezone"] = _user_row.timezone
     st.session_state["user"] = current
 
 theme.apply()  # brand CSS for every authenticated page (pages run below via nav.run())
@@ -154,7 +156,8 @@ theme.apply()  # brand CSS for every authenticated page (pages run below via nav
 if current["plan_status"] == "past_due" and current["plan_grace_until"]:
     st.warning(
         f"⚠️ Your last payment didn't go through — you still have full access until "
-        f"{current['plan_grace_until']:%d %b %Y}. Update your payment method on **My Plan**."
+        f"{to_local(current['plan_grace_until'], current.get('timezone')):%d %b %Y}. "
+        "Update your payment method on **My Plan**."
     )
 elif current["plan_status"] == "paused":
     st.info("Your subscription is paused — you're on the Free plan for now. Resume anytime on **My Plan**.")

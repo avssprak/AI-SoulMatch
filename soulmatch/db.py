@@ -34,6 +34,9 @@ _COLUMN_MIGRATIONS = [
     # V3-3 billing lifecycle (see V3_PLAN.md Sprint V3-3)
     ("users", "plan_status", "VARCHAR(20) DEFAULT 'free'"),
     ("users", "plan_grace_until", "DATETIME"),
+    # V3-6 NRI polish & "my children" (see V3_PLAN.md Sprint V3-6)
+    ("profiles", "is_own_child", "BOOLEAN DEFAULT 0"),
+    ("users", "timezone", "VARCHAR(64) DEFAULT 'Asia/Kolkata'"),
 ]
 
 _TENANT_TABLES = ["raw_messages", "profiles", "documents", "match_results", "activities", "tasks"]

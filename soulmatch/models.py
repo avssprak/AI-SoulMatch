@@ -101,6 +101,10 @@ class User(Base):
     # losing the tier to restore on resume/payment recovery.
     plan_status: Mapped[str] = mapped_column(String(20), default="free")
     plan_grace_until: Mapped[datetime | None] = mapped_column(DateTime)
+    # V3-6-2: IANA zone name (e.g. "America/New_York") for NRI members.
+    # Storage stays UTC everywhere else — this only affects display
+    # (see soulmatch.timezones).
+    timezone: Mapped[str] = mapped_column(String(64), default="Asia/Kolkata")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_login: Mapped[datetime | None] = mapped_column(DateTime)
@@ -200,6 +204,11 @@ class Profile(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     # Tenant boundary — every read path must filter on this (see soulmatch.tenancy).
     owner_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    # V3-6-1: marks this as the member's own son/daughter rather than a
+    # candidate. Deliberately a flag on Profile, not a separate Child
+    # entity — a member's own profile IS a Profile row like any other,
+    # just one they've tagged. Capped per plan (billing.can_mark_own_child).
+    is_own_child: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Personal
     full_name: Mapped[str | None] = mapped_column(String(255))
