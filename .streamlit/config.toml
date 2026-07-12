@@ -1,5 +1,10 @@
 [server]
 enableStaticServing = true
+# V3-5-3: hard ceiling Streamlit itself enforces before the app ever sees a
+# request — the app-level check (soulmatch.ui.check_upload_size, 10 MB) is
+# a tighter, friendlier limit for the file types this app actually expects
+# (biodata PDFs, photos); this is the outer bound in case that's bypassed.
+maxUploadSize = 25
 
 [theme]
 primaryColor = "#7A1E3F"

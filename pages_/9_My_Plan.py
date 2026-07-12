@@ -11,6 +11,7 @@ import streamlit as st
 
 from soulmatch import auth, billing, config, payments, theme
 from soulmatch.db import get_session
+from soulmatch.export import delete_owner_account, export_owner_data_zip
 from soulmatch.tenancy import owner_id_of
 
 current_user = auth.require_login()
@@ -127,3 +128,45 @@ st.caption(
     "Payments are processed by Razorpay (India, UPI Autopay) or Stripe (international). "
     "Questions? support@redprana.com."
 )
+
+st.divider()
+theme.section("Your data", "Export everything, or permanently delete your account (V3-5-2).")
+
+dcol1, dcol2 = st.columns(2)
+with dcol1:
+    st.markdown("**Export my data**")
+    st.caption("A ZIP with every profile, document, task, and activity your account has stored.")
+    if st.button("Prepare export"):
+        with get_session() as session:
+            st.session_state["_export_zip"] = export_owner_data_zip(session, owner)
+    if st.session_state.get("_export_zip"):
+        st.download_button(
+            "⬇️ Download my data (.zip)", st.session_state["_export_zip"],
+            file_name="soulmatch_export.zip", mime="application/zip",
+        )
+
+with dcol2:
+    st.markdown("**Delete my account**")
+    st.caption("Permanently deletes your account and everything in it. This cannot be undone.")
+    with st.expander("Delete my account"):
+        st.error(
+            "This permanently deletes your account, every profile, document, task, and "
+            "match result you own. There is no undo."
+        )
+        confirm_text = st.text_input("Type DELETE to confirm", key="delete_account_confirm")
+        if st.button("Permanently delete my account", type="primary", disabled=confirm_text != "DELETE"):
+            with get_session() as session:
+                user_row = session.get(auth.User, owner)
+                if auth.is_last_admin(session, user_row):
+                    st.error(
+                        "You're the only Administrator account — deleting it would lock the "
+                        "platform out of its own operator tools. Promote another account to "
+                        "Admin first, or contact support@redprana.com."
+                    )
+                else:
+                    delete_owner_account(session, owner)
+                    del st.session_state["user"]
+                    if "token" in st.query_params:
+                        del st.query_params["token"]
+                    st.success("Your account has been deleted.")
+                    st.rerun()

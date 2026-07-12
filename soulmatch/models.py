@@ -160,6 +160,21 @@ class WebhookEvent(Base):
     received_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class LoginAttempt(Base):
+    """Login rate-limiting (V3-5-3): one row per attempt, success or
+    failure, keyed by username (not owner_user_id — this exists before
+    authentication succeeds, so there is no owner yet). A table rather than
+    an in-process counter, deliberately — a Streamlit restart must not
+    reset a lockout."""
+
+    __tablename__ = "login_attempts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    username: Mapped[str] = mapped_column(String(100), index=True)
+    success: Mapped[bool] = mapped_column(Boolean, default=False)
+    attempted_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
 class RawMessage(Base):
     __tablename__ = "raw_messages"
 

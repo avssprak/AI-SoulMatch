@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -191,3 +193,79 @@ def test_register_member():
         auth.register_member(session, "not-an-email", "longenough1", None)
     with _pytest.raises(ValueError):
         auth.register_member(session, "new@example.com", "short", None)
+
+
+def test_change_password_rejects_short_password():
+    session = _memory_session()
+    user = auth.create_user(session, "user1", "oldpass123", None, "Member")
+    session.commit()
+    with pytest.raises(ValueError):
+        auth.change_password(session, user, "short")
+    # original password must still work — the rejected change had no effect
+    assert auth.authenticate(session, "user1", "oldpass123") is not None
+
+
+def test_lockout_after_threshold_failures():
+    session = _memory_session()
+    auth.create_user(session, "user1", "correctpass", None, "Member")
+    session.commit()
+
+    for _ in range(auth.LOGIN_LOCKOUT_THRESHOLD):
+        assert auth.authenticate(session, "user1", "wrongpass") is None
+    assert auth.is_locked_out(session, "user1")
+    # even the correct password is refused once locked out
+    assert auth.authenticate(session, "user1", "correctpass") is None
+
+
+def test_lockout_not_triggered_below_threshold():
+    session = _memory_session()
+    auth.create_user(session, "user1", "correctpass", None, "Member")
+    session.commit()
+
+    for _ in range(auth.LOGIN_LOCKOUT_THRESHOLD - 1):
+        auth.authenticate(session, "user1", "wrongpass")
+    assert not auth.is_locked_out(session, "user1")
+    assert auth.authenticate(session, "user1", "correctpass") is not None
+
+
+def test_lockout_expires_after_window():
+    session = _memory_session()
+    auth.create_user(session, "user1", "correctpass", None, "Member")
+    session.commit()
+
+    old_time = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=auth.LOGIN_LOCKOUT_MINUTES + 1)
+    for _ in range(auth.LOGIN_LOCKOUT_THRESHOLD):
+        session.add(auth.LoginAttempt(username="user1", success=False, attempted_at=old_time))
+    session.commit()
+
+    assert not auth.is_locked_out(session, "user1")
+    assert auth.authenticate(session, "user1", "correctpass") is not None
+
+
+def test_lockout_scoped_per_username():
+    session = _memory_session()
+    auth.create_user(session, "user1", "correctpass", None, "Member")
+    auth.create_user(session, "user2", "correctpass", None, "Member")
+    session.commit()
+
+    for _ in range(auth.LOGIN_LOCKOUT_THRESHOLD):
+        auth.authenticate(session, "user1", "wrongpass")
+    assert auth.is_locked_out(session, "user1")
+    assert not auth.is_locked_out(session, "user2")
+    assert auth.authenticate(session, "user2", "correctpass") is not None
+
+
+def test_is_last_admin():
+    session = _memory_session()
+    admin1 = auth.create_user(session, "admin1", "correctpass", None, "Admin")
+    session.commit()
+    assert auth.is_last_admin(session, admin1)
+
+    admin2 = auth.create_user(session, "admin2", "correctpass", None, "Admin")
+    session.commit()
+    assert not auth.is_last_admin(session, admin1)
+    assert not auth.is_last_admin(session, admin2)
+
+    member = auth.create_user(session, "member1", "correctpass", None, "Member")
+    session.commit()
+    assert not auth.is_last_admin(session, member)

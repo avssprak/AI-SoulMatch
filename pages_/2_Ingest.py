@@ -21,7 +21,7 @@ from soulmatch.ingest.whatsapp_export import parse_export
 from soulmatch.models import Activity, Profile, RawMessage
 from soulmatch import theme
 from soulmatch.tenancy import get_owned, owned, owner_id_of
-from soulmatch.ui import flash, show_flash
+from soulmatch.ui import check_upload_size, flash, show_flash
 
 
 def _metered_extract(session, current_user: dict, text: str) -> dict:
@@ -203,7 +203,7 @@ with tab_import:
         type=["txt", "zip", "pdf"],
     )
 
-    if uploaded is not None:
+    if uploaded is not None and check_upload_size(uploaded):
         data = uploaded.read()
         is_pdf = uploaded.name.lower().endswith(".pdf")
         messages, media = [], {}

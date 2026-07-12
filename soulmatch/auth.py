@@ -25,19 +25,31 @@ import json
 import os
 import re
 import time
+from datetime import datetime, timedelta, timezone
 
 import streamlit as st
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from . import config
-from .models import ROLES, EDITOR_ROLES, User, utcnow
+from .models import ROLES, EDITOR_ROLES, LoginAttempt, User, utcnow
 
 _PBKDF2_ITERATIONS = 260_000
 ADMIN_ROLE = "Admin"
 MEMBER_ROLE = "Member"
 SESSION_TOKEN_TTL_SECONDS = 7 * 24 * 3600
 MIN_PASSWORD_LENGTH = 8
+
+# V3-5-3 login rate-limiting: a table (not an in-process counter) so a
+# server restart can't reset a lockout. Rolling window: once locked, every
+# further attempt is rejected without checking the password (so it doesn't
+# record a new failure) — the lockout naturally expires as old failures
+# age out of the window.
+LOGIN_LOCKOUT_THRESHOLD = 8
+LOGIN_LOCKOUT_MINUTES = 15
+LOCKOUT_MESSAGE = (
+    f"Too many failed sign-in attempts. Please wait {LOGIN_LOCKOUT_MINUTES} minutes and try again."
+)
 
 
 def hash_password(password: str, salt: bytes | None = None) -> str:
@@ -92,11 +104,38 @@ def register_member(session: Session, email: str, password: str, full_name: str 
     return user
 
 
+def _recent_failed_attempts(session: Session, username: str, *, now: datetime | None = None) -> int:
+    now = now or datetime.now(timezone.utc).replace(tzinfo=None)
+    window_start = now - timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
+    return session.scalar(
+        select(func.count(LoginAttempt.id)).where(
+            LoginAttempt.username == username,
+            LoginAttempt.success.is_(False),
+            LoginAttempt.attempted_at >= window_start,
+        )
+    ) or 0
+
+
+def is_locked_out(session: Session, username: str, *, now: datetime | None = None) -> bool:
+    """True if `username` has LOGIN_LOCKOUT_THRESHOLD+ failed attempts in the
+    last LOGIN_LOCKOUT_MINUTES minutes. Call this BEFORE authenticate() so
+    the caller can show LOCKOUT_MESSAGE instead of a generic invalid-login
+    error — authenticate() itself also refuses to check the password while
+    locked, so a correct password during lockout still can't sign in."""
+    return _recent_failed_attempts(session, username.strip().lower(), now=now) >= LOGIN_LOCKOUT_THRESHOLD
+
+
 def authenticate(session: Session, username: str, password: str) -> User | None:
-    user = session.scalar(select(User).where(User.username == username.strip().lower()))
-    if user is None or not user.is_active:
+    username_norm = username.strip().lower()
+    if is_locked_out(session, username_norm):
         return None
-    if not verify_password(password, user.password_hash):
+    user = session.scalar(select(User).where(User.username == username_norm))
+    ok = user is not None and user.is_active and verify_password(password, user.password_hash)
+    # Recorded even on success, so is_locked_out's window naturally contains
+    # only genuine failures — a correct login doesn't need to reset anything.
+    session.add(LoginAttempt(username=username_norm, success=ok))
+    session.commit()
+    if not ok:
         return None
     user.last_login = utcnow()
     session.commit()
@@ -104,8 +143,19 @@ def authenticate(session: Session, username: str, password: str) -> User | None:
 
 
 def change_password(session: Session, user: User, new_password: str) -> None:
+    if len(new_password) < MIN_PASSWORD_LENGTH:
+        raise ValueError(f"Password must be at least {MIN_PASSWORD_LENGTH} characters.")
     user.password_hash = hash_password(new_password)
     session.commit()
+
+
+def is_last_admin(session: Session, user: User) -> bool:
+    """True if `user` is an Admin and no other Admin account exists — used
+    to refuse deleting/demoting the only operator account (V3-5-2)."""
+    if user.role != ADMIN_ROLE:
+        return False
+    count = session.scalar(select(func.count(User.id)).where(User.role == ADMIN_ROLE)) or 0
+    return count <= 1
 
 
 def _b64encode(raw: bytes) -> str:

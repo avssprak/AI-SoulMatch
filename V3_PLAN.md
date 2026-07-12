@@ -115,6 +115,28 @@ V3-1 shipped on 2026-07-12. What a fresh session must know before touching code:
   all say this now; match it in any new user-facing copy. The site is NOT
   actually deployed anywhere yet — these are the artifacts a human runs on
   a real VPS, not a running production instance.
+- **V3-5 shipped (2026-07-12):** `soulmatch/legal.py` (Privacy Policy/Terms
+  markdown, DPDP-aware, explicitly marked draft-not-reviewed-by-counsel —
+  `[HUMAN]` get real legal review before public launch), rendered via
+  `st.dialog` from the signup form (no unauthenticated multipage routing
+  exists in this app); signup now requires the consent checkbox.
+  `soulmatch/export.py` has `export_owner_data_zip`/`delete_owner_account`,
+  both wired into new "Your data" section on My Plan — export is a real
+  downloadable ZIP (one JSON per owned table + uploaded files), delete
+  requires typing DELETE and refuses via `auth.is_last_admin` if the
+  caller is the only Admin. `auth.py` gained login rate-limiting
+  (`LoginAttempt` table, `is_locked_out`/`LOGIN_LOCKOUT_THRESHOLD`=8/
+  `LOGIN_LOCKOUT_MINUTES`=15 — lockout check happens before recording each
+  attempt, so it activates starting on the (threshold+1)th call, not the
+  threshold-th; verified via the real UI, not just unit tests) and
+  `change_password` now enforces `MIN_PASSWORD_LENGTH` itself (app.py's
+  change-password form no longer hardcodes 6). `soulmatch/ui.py` has
+  `check_upload_size`/`MAX_UPLOAD_BYTES` (10MB app-level, wired into
+  Ingest + Profiles document upload) and `.streamlit/config.toml` sets
+  `maxUploadSize = 25` as Streamlit's own outer ceiling. All of this was
+  driven through the real Streamlit UI in verification (signup consent
+  gate, 9-attempt lockout, export download, delete-then-refuse-last-admin),
+  not just unit-tested — see this sprint's own heading for specifics.
 
 **Verification recipe for every V3 task** (extends SPRINT_PLAN.md's):
 1. `.venv/Scripts/python.exe -m pytest -q` — all pass (126+ at V3-2 handoff).
@@ -142,7 +164,7 @@ then list the exact `[HUMAN]` steps left in your final report.
 ## Part 2 — Sprints
 
 Execute strictly in order — each sprint builds on the previous one's schema
-and helpers. **Next up: V3-5.** Work task-by-task, verify per Part 1.5 after
+and helpers. **Next up: V3-6.** Work task-by-task, verify per Part 1.5 after
 each task, and end every session by updating the sprint's status line here
 (✅ DONE date, or a "partially done: …" note listing exactly what remains).
 
@@ -375,7 +397,15 @@ config; it's the external accounts and DNS that don't exist yet.
   actually rehearsed once against a scratch dir as the verification for
   this task. `[HUMAN]` uptime ping (e.g. UptimeRobot) on /.
 
-### Sprint V3-5 — Trust, legal & data rights  *(cheap now, existential later)*
+### Sprint V3-5 — Trust, legal & data rights  *(cheap now, existential later)* — ✅ DONE 2026-07-12
+
+**Implementation notes for V3-6+ sessions:** see the "V3-5 shipped" bullet
+in Part 1.5 for exactly what exists (`soulmatch/legal.py`,
+`soulmatch/export.py`, `auth.py`'s lockout/last-admin helpers,
+`ui.check_upload_size`). `[HUMAN]` outstanding: legal counsel review of
+`soulmatch/legal.py` before public launch (the draft notice embedded in
+both documents says this explicitly — don't remove it until that review
+happens).
 
 - **V3-5-1** Privacy Policy + Terms: static markdown rendered on two new
   unauthenticated pages (add to `app.py` nav for logged-out state or render

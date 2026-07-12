@@ -2,9 +2,19 @@
 
 import streamlit as st
 
-from soulmatch import auth, billing, landing, theme
+from soulmatch import auth, billing, landing, legal, theme
 from soulmatch.db import get_session, init_db
 from soulmatch.errors import init_error_reporting
+
+
+@st.dialog("Privacy Policy")
+def _show_privacy_dialog() -> None:
+    st.markdown(legal.PRIVACY_POLICY_MD)
+
+
+@st.dialog("Terms of Service")
+def _show_terms_dialog() -> None:
+    st.markdown(legal.TERMS_MD)
 
 init_error_reporting()
 
@@ -62,17 +72,23 @@ if auth.current_user() is None:
                     password = st.text_input("Password", type="password")
                     submitted = st.form_submit_button("Sign in", type="primary", use_container_width=True)
                 if submitted:
+                    locked = False
                     with get_session() as session:
-                        user = auth.authenticate(session, username, password)
-                        if user:
-                            st.session_state["user"] = {
-                                "id": user.id, "username": user.username,
-                                "full_name": user.full_name, "role": user.role,
-                                "plan": user.plan,
-                            }
-                            st.query_params["token"] = auth.mint_session_token(user)
+                        if auth.is_locked_out(session, username):
+                            locked = True
+                        else:
+                            user = auth.authenticate(session, username, password)
+                            if user:
+                                st.session_state["user"] = {
+                                    "id": user.id, "username": user.username,
+                                    "full_name": user.full_name, "role": user.role,
+                                    "plan": user.plan,
+                                }
+                                st.query_params["token"] = auth.mint_session_token(user)
                     if auth.current_user():
                         st.rerun()
+                    elif locked:
+                        st.error(auth.LOCKOUT_MESSAGE)
                     else:
                         st.error("Invalid username or password.")
             with tab_signup:
@@ -82,9 +98,15 @@ if auth.current_user() is None:
                     su_email = st.text_input("Email")
                     su_password = st.text_input("Password", type="password")
                     su_password2 = st.text_input("Confirm password", type="password")
+                    su_agree = st.checkbox("I agree to the Terms & Privacy Policy")
                     su_submitted = st.form_submit_button(
                         "Create free account", type="primary", use_container_width=True
                     )
+                dc1, dc2 = st.columns(2)
+                if dc1.button("Privacy Policy", key="show_privacy", use_container_width=True):
+                    _show_privacy_dialog()
+                if dc2.button("Terms", key="show_terms", use_container_width=True):
+                    _show_terms_dialog()
                 if su_submitted:
                     # Simple per-connection rate limit against scripted signup abuse.
                     attempts = st.session_state.get("_signup_attempts", 0) + 1
@@ -93,6 +115,8 @@ if auth.current_user() is None:
                         st.error("Too many attempts — please refresh the page and try again later.")
                     elif su_password != su_password2:
                         st.error("Passwords do not match.")
+                    elif not su_agree:
+                        st.error("Please agree to the Terms & Privacy Policy to continue.")
                     else:
                         try:
                             with get_session() as session:
@@ -170,14 +194,16 @@ with st.sidebar:
                     user = session.get(auth.User, current["id"])
                     if not auth.verify_password(old_pw, user.password_hash):
                         st.error("Current password is incorrect.")
-                    elif len(new_pw) < 6:
-                        st.error("New password must be at least 6 characters.")
                     else:
-                        auth.change_password(session, user, new_pw)
-                        # re-mint immediately so the current session (which still
-                        # has the old token in the URL) isn't logged out too
-                        st.query_params["token"] = auth.mint_session_token(user)
-                        st.success("Password updated.")
+                        try:
+                            auth.change_password(session, user, new_pw)
+                        except ValueError as e:
+                            st.error(str(e))
+                        else:
+                            # re-mint immediately so the current session (which still
+                            # has the old token in the URL) isn't logged out too
+                            st.query_params["token"] = auth.mint_session_token(user)
+                            st.success("Password updated.")
 
 dashboard = st.Page("pages_/1_Dashboard.py", title="Dashboard", icon=":material/space_dashboard:", default=True)
 ingest = st.Page("pages_/2_Ingest.py", title="Import Profiles", icon=":material/upload_file:")

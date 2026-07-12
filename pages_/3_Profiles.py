@@ -21,7 +21,7 @@ from soulmatch.search import describe_filters, parse_query
 from soulmatch.summary import profile_summary_html
 from soulmatch.tenancy import get_owned, owned, owner_id_of
 from soulmatch import theme
-from soulmatch.ui import flash, show_flash, stage_badge
+from soulmatch.ui import check_upload_size, flash, show_flash, stage_badge
 
 IMAGE_DOC_EXTENSIONS = (".jpg", ".jpeg", ".png")
 # Parsed-query fields with no dedicated filter widget on this page — applied
@@ -470,6 +470,8 @@ with tab_search:
                         if st.form_submit_button("Upload document"):
                             if doc_file is None:
                                 st.warning("Choose a file first.")
+                            elif not check_upload_size(doc_file):
+                                pass
                             else:
                                 save_document(session, profile.id, doc_kind, doc_file.name, doc_file.read(),
                                               created_by_user_id=current_user["id"], owner_user_id=owner)
