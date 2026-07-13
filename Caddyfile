@@ -7,6 +7,26 @@
 # fail its first cert request until DNS resolves.
 
 soulmatch.redprana.com {
+	# Link-preview crawlers (WhatsApp, Facebook, Twitter/X, LinkedIn, Slack,
+	# Telegram) can't read Streamlit's client-rendered <title>/meta tags, so
+	# a shared link showed the generic "Streamlit" preview. Serve those
+	# crawlers a static page with proper Open Graph tags instead; everyone
+	# else still gets proxied straight to the app. Must be matched before
+	# the catch-all reverse_proxy below.
+	@social_crawlers header_regexp User-Agent (?i)(facebookexternalhit|WhatsApp|Twitterbot|LinkedInBot|Slackbot|TelegramBot|Discordbot|Pinterest)
+	handle @social_crawlers {
+		root * /srv/social-preview
+		file_server
+	}
+
+	# The Open Graph image itself, referenced by absolute URL from the
+	# crawler preview page above — served for everyone, not just bots,
+	# since crawlers fetch it as a follow-up request after the HTML.
+	handle /og-image.png {
+		root * /srv/social-preview
+		file_server
+	}
+
 	# Payment-gateway webhooks (Razorpay/Stripe) go to the sidecar, not the
 	# Streamlit app — must be matched before the catch-all reverse_proxy below.
 	handle /webhooks/* {

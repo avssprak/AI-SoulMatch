@@ -1,0 +1,48 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3a0d1f"/>
+      <stop offset="0.55" stop-color="#5c1530"/>
+      <stop offset="1" stop-color="#2a0a17"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.42" r="0.75">
+      <stop offset="0" stop-color="#8A2A47" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#8A2A47" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="smMaroon" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#E88AA8"/>
+      <stop offset="1" stop-color="#C24A6E"/>
+    </linearGradient>
+    <linearGradient id="smGold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F6D77C"/>
+      <stop offset="1" stop-color="#D9A62B"/>
+    </linearGradient>
+    <linearGradient id="smSpark" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F6B35C"/>
+      <stop offset="1" stop-color="#E88F2A"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect width="1200" height="630" fill="url(#glow)"/>
+
+  <!-- Mark, centered above the wordmark with clear spacing -->
+  <g transform="translate(491,130) scale(3.4)">
+    <path d="M32 10 L19 7 M32 10 L45 6" stroke="#E8C55B" stroke-width="1.1" opacity="0.6" stroke-linecap="round" fill="none"/>
+    <circle cx="19" cy="7" r="1.9" fill="#E8C55B" opacity="0.9"/>
+    <circle cx="45" cy="6" r="1.5" fill="#E8C55B" opacity="0.75"/>
+    <path d="M32 55 C13 42 6.5 25 15.5 15.8 C21.5 9.6 29.5 12.4 31 20.5"
+          fill="none" stroke="url(#smMaroon)" stroke-width="5.6" stroke-linecap="round"/>
+    <path d="M32 55 C51 42 57.5 25 48.5 15.8 C42.5 9.6 34.5 12.4 33 20.5"
+          fill="none" stroke="url(#smGold)" stroke-width="5.6" stroke-linecap="round"/>
+    <path d="M32 4.5 L36.5 10 L32 15.5 L27.5 10 Z" fill="url(#smSpark)"/>
+  </g>
+
+  <text x="600" y="405" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="72" font-weight="700" letter-spacing="0.5">
+    <tspan fill="#E8C55B">AI</tspan><tspan fill="#FBEFE4">-SoulMatch</tspan>
+  </text>
+
+  <text x="600" y="480" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="27" fill="#F3E6DC" opacity="0.95">
+    The Private CRM for Your Child's Marriage Search
+  </text>
+</svg>
