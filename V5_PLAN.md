@@ -157,17 +157,26 @@ any page at 390 px; stepper wraps 2×2; login card usable on a phone.
 ## Sprint V5-5 — Security & robustness follow-ups (from this review)
 
 1. **V5-5-1 Session token out of the URL.** `?token=` in the query string
-   leaks via copied/shared links and screenshots. Replace with a cookie
-   (e.g. `streamlit-cookies-controller` or `st.context.cookies` read + a
-   small JS set via `st.markdown`) — keep the signed-token format and
-   `validate_session_token` unchanged; only the transport moves. Must survive
-   refresh exactly as today. If a reliable cookie write proves impractical in
-   Streamlit, fallback: keep the URL token but shorten its TTL and re-mint on
-   every load, and strip it from the URL after restoring the session
-   (`del st.query_params["token"]` post-restore, re-set only on login).
+   leaks via copied/shared links and screenshots.
+   - ✅ **Shipped (2026-07-14):** the fallback mitigation — every restore
+     from the URL (after first login) rotates to a 24h token
+     (`auth.SESSION_TOKEN_ROTATE_TTL_SECONDS`) instead of re-minting another
+     7 days. Shrinks the exposure window without an architecture change.
+   - **Still open (V5-5-1b):** the full fix — move the token into a cookie
+     (e.g. `streamlit-cookies-controller`, or `st.context.cookies` read + a
+     small JS `document.cookie` write via `st.markdown`) so it never
+     appears in the URL bar at all. Keep the signed-token format and
+     `validate_session_token` unchanged; only the transport moves. Not
+     done here because a JS cookie-write path needs real-browser QA
+     (login, refresh, logout-everywhere, password-change) that wasn't
+     available in that session — do this with `/verify` or a manual pass
+     across all four flows before shipping.
 2. **V5-5-2 Self-hosted fonts.** `@import` of Google Fonts in `theme.py` is
    a render-blocking third-party call (and fails offline). Download the two
    families into `static/fonts/`, serve via `@font-face`. Landing page too.
+   **Still open** — needs the actual font binaries fetched (Google Fonts
+   or a mirror) and their license (both are OFL) included, not just a CSS
+   change.
 
 ## Sprint V5-6 — Email verification at signup
 
