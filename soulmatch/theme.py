@@ -305,6 +305,35 @@ hr {{ border: none; border-top: 1px dashed #EBDCC5; margin: 1.6rem 0; }}
 .sm-step .label {{ font: 700 0.85rem/1.3 'Inter', sans-serif; color: var(--sm-ink); }}
 .sm-step.todo .label {{ color: var(--sm-muted); }}
 
+/* ---------- mobile (V5-3-1) ----------
+   The landing page has its own breakpoints in landing.py; this covers the
+   authenticated app shell. 640px ~ phones, 1000px ~ small tablets. */
+@media (max-width: 1000px) {{
+    .block-container,
+    [data-testid="stMainBlockContainer"] {{ padding-left: 1.2rem !important; padding-right: 1.2rem !important; }}
+}}
+@media (max-width: 640px) {{
+    .block-container,
+    [data-testid="stMainBlockContainer"] {{
+        padding-left: 0.9rem !important;
+        padding-right: 0.9rem !important;
+        padding-top: 4.2rem !important;
+    }}
+    .sm-page-title {{ font-size: 1.6rem; }}
+    .sm-page-sub {{ font-size: 0.92rem; }}
+    /* stepper: 4-across squeezes to unreadable slivers — wrap into a 2x2 grid */
+    .sm-stepper {{ flex-wrap: wrap; }}
+    .sm-step {{ flex: 1 1 45%; padding: 10px 12px; }}
+    .sm-step .label {{ font-size: 0.8rem; }}
+    [data-testid="stMetric"] {{ padding: 12px 14px; }}
+    .sm-empty {{ padding: 24px 16px; }}
+    /* Streamlit stacks columns full-width on phones; buttons that shared a
+       row with text (Dashboard "Go" actions) otherwise render as tiny
+       left-aligned stubs under it. */
+    .stButton button, .stFormSubmitButton button, .stDownloadButton button {{ width: 100%; }}
+    .stTabs [data-baseweb="tab"] {{ padding: 8px 10px; font-size: 0.85rem; }}
+}}
+
 /* branded empty state */
 .sm-empty {{
     text-align: center;
