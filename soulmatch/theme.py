@@ -49,9 +49,18 @@ CHART_SEQUENCE = [MAROON_2, MAROON_3, "#C77E9B", "#DFAEC2"]
 BRIDE_COLOR = "#A8476F"
 GROOM_COLOR = "#8A6D1B"
 
+# V5-5-2: self-hosted variable fonts (static/fonts/, OFL licenses alongside)
+# instead of a render-blocking Google Fonts @import that fails offline.
+FONT_FACE_CSS = """
+@font-face { font-family: 'Inter'; font-style: normal; font-weight: 400 800;
+    font-display: swap; src: url('/app/static/fonts/Inter-var.woff2') format('woff2'); }
+@font-face { font-family: 'Playfair Display'; font-style: normal; font-weight: 600 800;
+    font-display: swap; src: url('/app/static/fonts/PlayfairDisplay-var.woff2') format('woff2'); }
+"""
+
 _CSS = f"""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap');
+{FONT_FACE_CSS}
 
 :root {{
     --sm-ivory: {IVORY};

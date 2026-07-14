@@ -12,6 +12,7 @@ from pathlib import Path
 import streamlit as st
 
 from . import billing, config
+from .theme import FONT_FACE_CSS
 
 # V3-4-3: the [HUMAN] logo file — drop it in BOTH assets/ (st.logo/page_icon
 # read local paths directly) and static/ (Streamlit's static file server,
@@ -34,9 +35,7 @@ def _redprana_lockup_html(*, light: bool, img_height: str = "22px") -> str:
     return f'<span class="sm-by" style="color:{text_color};">by <b>RedPrana</b></span>'
 
 # One source of truth for the brand palette, referenced throughout the CSS.
-_CSS = """
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap');
+_CSS = "<style>" + FONT_FACE_CSS + """
 
 :root {
     --sm-ivory: #FFFCF7;
