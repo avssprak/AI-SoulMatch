@@ -61,27 +61,30 @@ marriages = sum(1 for p in profiles if p.stage == "Marriage")
 theme.section("Today", "What needs your attention this morning.")
 today_items = []
 if overdue_task_count:
-    today_items.append((f"⚠️ {overdue_task_count} overdue task(s)", "dash_today_tasks", TASKS_PAGE))
+    today_items.append((f"⚠️ {overdue_task_count} overdue task(s)", "Open tasks →", "dash_today_tasks", TASKS_PAGE))
 if unprocessed_count:
     today_items.append((f"📥 {unprocessed_count} imported message(s) waiting to be processed",
-                         "dash_today_ingest", INGEST_PAGE))
+                         "Review imports →", "dash_today_ingest", INGEST_PAGE))
 if pending_horoscope_count:
     today_items.append((f"🔯 {pending_horoscope_count} candidate(s) missing a horoscope",
-                         "dash_today_astro", PROFILES_PAGE))
+                         "View candidates →", "dash_today_astro", PROFILES_PAGE))
 if stale_shortlist_count:
     today_items.append((
         f"⭐ {stale_shortlist_count} shortlisted candidate(s) waiting on you — no follow-up in 7+ days",
-        "dash_today_shortlist_stale", PROFILES_PAGE,
+        "View shortlist →", "dash_today_shortlist_stale", PROFILES_PAGE,
     ))
 if stale_case_count:
     today_items.append((f"💤 {stale_case_count} stale case(s) — no activity in 14+ days",
-                         "dash_today_stale", SEARCH_PAGE))
+                         "View stale cases →", "dash_today_stale", SEARCH_PAGE))
 
 if today_items:
-    for label, key, target in today_items:
+    # [5, 1] on desktop; Streamlit stacks columns full-width on narrow
+    # viewports, and the mobile CSS block (theme.py) makes the button
+    # full-width there too, so this reads as label-then-button either way.
+    for label, cta, key, target in today_items:
         tc1, tc2 = st.columns([5, 1])
         tc1.markdown(f"- {label}")
-        if tc2.button("Go →", key=key):
+        if tc2.button(cta, key=key):
             if target == TASKS_PAGE:
                 st.session_state[TASKS_OVERDUE_PREF_KEY] = True
             st.switch_page(target)
@@ -90,29 +93,33 @@ else:
 
 st.divider()
 
-row1 = st.columns(4)
-row1[0].metric("Active Cases", active_cases)
-if row1[0].button("Open Candidates →", key="dash_open_profiles"):
-    st.switch_page(PROFILES_PAGE)
-row1[1].metric("Pending Horoscope", pending_horoscope_count)
-if row1[1].button("Compute & save a chart →", key="dash_open_astro"):
-    st.switch_page(PROFILES_PAGE)
-row1[2].metric("Overdue Tasks", overdue_task_count)
-if row1[2].button("Open overdue tasks →", key="dash_overdue_tasks"):
-    st.session_state[TASKS_OVERDUE_PREF_KEY] = True
-    st.switch_page(TASKS_PAGE)
-row1[3].metric("Stale Cases", stale_case_count)
-if row1[3].button("See Quick Insights →", key="dash_open_insights"):
-    st.switch_page(SEARCH_PAGE)
+# V5-4-2: with fewer than 3 candidates, eight metrics reading mostly zero are
+# noise, not signal — the Today digest and journey stepper below already say
+# what to do next. The full metrics reappear once there's something to see.
+if total >= 3:
+    row1 = st.columns(4)
+    row1[0].metric("Active Cases", active_cases)
+    if row1[0].button("Open Candidates →", key="dash_open_profiles"):
+        st.switch_page(PROFILES_PAGE)
+    row1[1].metric("Pending Horoscope", pending_horoscope_count)
+    if row1[1].button("Compute & save a chart →", key="dash_open_astro"):
+        st.switch_page(PROFILES_PAGE)
+    row1[2].metric("Overdue Tasks", overdue_task_count)
+    if row1[2].button("Open overdue tasks →", key="dash_overdue_tasks"):
+        st.session_state[TASKS_OVERDUE_PREF_KEY] = True
+        st.switch_page(TASKS_PAGE)
+    row1[3].metric("Stale Cases", stale_case_count)
+    if row1[3].button("See Quick Insights →", key="dash_open_insights"):
+        st.switch_page(SEARCH_PAGE)
 
-row2 = st.columns(4)
-row2[0].metric("Total Candidates", total)
-row2[1].metric("Brides", brides)
-row2[2].metric("Grooms", grooms)
-row2[3].metric("Marriages", marriages)
-st.caption(f"Pending Tasks: {pending_task_count}")
+    row2 = st.columns(4)
+    row2[0].metric("Total Candidates", total)
+    row2[1].metric("Brides", brides)
+    row2[2].metric("Grooms", grooms)
+    row2[3].metric("Marriages", marriages)
+    st.caption(f"Pending Tasks: {pending_task_count}")
 
-st.divider()
+    st.divider()
 
 # V4-2-2/V4-2-3: always-visible 4-step journey strip — replaces the old
 # `total < 3` gated checklist (V3-6-3). Every step checks off from real data,
@@ -134,7 +141,7 @@ if current_step:
     label, target, cta = current_step
     sc1, sc2 = st.columns([5, 2])
     sc1.markdown(f"**Next: {label}** — {cta}")
-    if sc2.button("Go →", key="journey_current_step_go"):
+    if sc2.button(f"Go to {label} →", key="journey_current_step_go"):
         st.switch_page(target)
 else:
     st.caption("🎉 You've completed every step of the journey — keep going below.")
