@@ -118,6 +118,7 @@ img[data-testid="stLogo"] { display: none; }
 .sm-price-plan { font: 700 1.1rem/1 'Playfair Display', Georgia, serif; color: var(--sm-maroon); margin-bottom: 10px; }
 .sm-price-amount { font: 800 2rem/1 'Inter', sans-serif; color: var(--sm-maroon-2); margin-bottom: 4px; }
 .sm-price-amount span { font: 500 0.9rem/1 'Inter', sans-serif; color: var(--sm-muted); }
+.sm-price-annual { font: 500 0.82rem/1.4 'Inter', sans-serif; color: var(--sm-muted); margin-top: 6px; }
 .sm-price-card ul { list-style: none; padding: 0; margin: 18px 0 0 0; }
 .sm-price-card li {
     font: 400 0.9rem/1.6 'Inter', sans-serif; color: var(--sm-ink);
@@ -566,11 +567,20 @@ def _pricing_cards_html(currency: str) -> str:
     tags as text instead of a card (bug found live on the landing page)."""
     symbol = "₹" if currency == "INR" else "$"
     price_table = billing.PLAN_PRICES_INR if currency == "INR" else billing.PLAN_PRICES_USD
+    annual_table = billing.PLAN_PRICES_INR_ANNUAL if currency == "INR" else billing.PLAN_PRICES_USD_ANNUAL
     cards = []
     for plan_key, label in (("free", "Free"), ("plus", "Plus"), ("pro", "Pro")):
         limits = billing.limits_for(plan_key)
         price = price_table[plan_key]
         price_html = f"{symbol}{price}<span>/mo</span>" if price else "Free"
+        # Annual option as a one-line caption under the monthly headline —
+        # the discount % is computed from the real price tables so the cards
+        # can never advertise a saving billing doesn't honor.
+        if price:
+            price_html += (
+                f'<div class="sm-price-annual">or {symbol}{annual_table[plan_key]:,}/yr'
+                f" — save {billing.annual_discount_pct(plan_key, currency)}%</div>"
+            )
         highlight = " sm-price-highlight" if plan_key == "plus" else ""
         bulk = limits["bulk_imports"]
         items = [
