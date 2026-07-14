@@ -3,17 +3,32 @@
 # root, or double-click via a shortcut with this as the target.
 
 $ErrorActionPreference = "Stop"
-Set-Location $PSScriptRoot
+
+# $PSScriptRoot is empty in a few invocation contexts (e.g. some conda/venv
+# -wrapped prompts calling the script by bare name instead of via .\ or a
+# full path) — fall back to $PSCommandPath's directory so Join-Path below
+# never silently builds a null/empty path (which Start-Process then reports
+# as a confusing "FilePath is null or empty" with no mention of why).
+$scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $PSCommandPath }
+if (-not $scriptDir) {
+    Write-Host "Could not determine this script's own directory — run it as '.\run_local.ps1' from the project root instead of by bare name." -ForegroundColor Red
+    exit 1
+}
+Set-Location $scriptDir
 
 if (-not (Test-Path ".env")) {
     Write-Host "No .env found — copy .env.example to .env and configure it first." -ForegroundColor Yellow
     exit 1
 }
 
-$venvPython = Join-Path $PSScriptRoot ".venv\Scripts\streamlit.exe"
-$venvPythonExe = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
+$venvPython = Join-Path $scriptDir ".venv\Scripts\streamlit.exe"
+$venvPythonExe = Join-Path $scriptDir ".venv\Scripts\python.exe"
 if (-not (Test-Path $venvPython)) {
     Write-Host "Virtual environment not found at .venv — run: py -3.12 -m venv .venv; .venv\Scripts\pip install -r requirements.txt" -ForegroundColor Yellow
+    exit 1
+}
+if (-not (Test-Path $venvPythonExe)) {
+    Write-Host "python.exe not found at $venvPythonExe — the .venv looks incomplete. Recreate it: py -3.12 -m venv .venv; .venv\Scripts\pip install -r requirements.txt" -ForegroundColor Yellow
     exit 1
 }
 
