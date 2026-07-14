@@ -18,6 +18,7 @@ TASKS_OVERDUE_PREF_KEY = "tasks_overdue_pref"
 # Centralized page paths — every st.switch_page / st.Page target should use
 # one of these instead of a literal string, so a future rename (V4-1) is a
 # one-line change instead of a grep-and-replace across pages_/*.py.
+WELCOME_PAGE = "pages_/00_Welcome.py"
 MY_CHILD_PAGE = "pages_/0_My_Child.py"
 DASHBOARD_PAGE = "pages_/1_Dashboard.py"
 INGEST_PAGE = "pages_/2_Ingest.py"
@@ -27,6 +28,7 @@ TASKS_PAGE = "pages_/6_Tasks.py"
 USERS_PAGE = "pages_/7_Users.py"
 SEARCH_PAGE = "pages_/8_Search.py"
 MY_PLAN_PAGE = "pages_/9_My_Plan.py"
+GUIDE_PAGE = "pages_/10_Guide.py"
 
 
 def request_open_profile(profile_id: int) -> None:

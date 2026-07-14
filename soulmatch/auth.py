@@ -32,7 +32,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from . import config
-from .models import ROLES, EDITOR_ROLES, LoginAttempt, User, utcnow
+from .models import ROLES, EDITOR_ROLES, LoginAttempt, Profile, User, utcnow
+from .tenancy import owned
 
 _PBKDF2_ITERATIONS = 260_000
 ADMIN_ROLE = "Admin"
@@ -224,6 +225,24 @@ def ensure_bootstrap_admin(session: Session) -> None:
         session, config.BOOTSTRAP_ADMIN_USERNAME, config.BOOTSTRAP_ADMIN_PASSWORD,
         "Platform Admin", ADMIN_ROLE,
     )
+    session.commit()
+
+
+def needs_onboarding(session: Session, user: User) -> bool:
+    """V5-1-1: True iff `user` should be routed to the first-login wizard
+    (pages_/00_Welcome.py) instead of the normal app. Admins never see it —
+    it's the parent journey, not an operator concern. A member who already
+    has any owned Profile (pre-V5 account, or restored from an export)
+    doesn't need it either; callers should follow a False here by persisting
+    onboarded_at via mark_onboarded() so this check is cheap on every future
+    page load."""
+    if user.onboarded_at is not None or is_admin(user.role):
+        return False
+    return session.scalar(owned(select(Profile.id), Profile, user.id).limit(1)) is None
+
+
+def mark_onboarded(session: Session, user: User) -> None:
+    user.onboarded_at = utcnow()
     session.commit()
 
 

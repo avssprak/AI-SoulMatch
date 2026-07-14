@@ -121,6 +121,12 @@ class User(Base):
     # a member preference, not a per-match setting, since it reflects how
     # much stock this family puts in Vedic matching generally.
     astro_weight: Mapped[int] = mapped_column(Integer, default=50)
+    # V5-1-1: set once the member finishes (or skips) the first-login
+    # onboarding wizard. NULL routes app.py to pages_/00_Welcome.py on every
+    # load. Existing accounts are backfilled lazily at that same routing
+    # check (any owned profile already => treat as onboarded) rather than in
+    # a migration, since "has data" is cheap to check and never wrong.
+    onboarded_at: Mapped[datetime | None] = mapped_column(DateTime)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_login: Mapped[datetime | None] = mapped_column(DateTime)

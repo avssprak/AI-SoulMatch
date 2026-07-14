@@ -39,6 +39,8 @@ _COLUMN_MIGRATIONS = [
     ("users", "timezone", "VARCHAR(64) DEFAULT 'Asia/Kolkata'"),
     # V4-4-1 composite Scoreboard weight (see V4_PLAN.md Sprint V4-4)
     ("users", "astro_weight", "INTEGER DEFAULT 50"),
+    # V5-1-1 first-login onboarding wizard (see V5_PLAN.md Sprint V5-1)
+    ("users", "onboarded_at", "DATETIME"),
 ]
 
 _TENANT_TABLES = ["raw_messages", "profiles", "documents", "match_results", "activities", "tasks"]

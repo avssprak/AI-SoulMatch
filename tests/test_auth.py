@@ -269,3 +269,37 @@ def test_is_last_admin():
     member = auth.create_user(session, "member1", "correctpass", None, "Member")
     session.commit()
     assert not auth.is_last_admin(session, member)
+
+
+def test_needs_onboarding_true_for_fresh_member():
+    session = _memory_session()
+    member = auth.create_user(session, "member1", "correctpass", None, "Member")
+    session.commit()
+    assert auth.needs_onboarding(session, member)
+
+
+def test_needs_onboarding_false_after_mark_onboarded():
+    session = _memory_session()
+    member = auth.create_user(session, "member1", "correctpass", None, "Member")
+    session.commit()
+    auth.mark_onboarded(session, member)
+    assert member.onboarded_at is not None
+    assert not auth.needs_onboarding(session, member)
+
+
+def test_needs_onboarding_false_for_admin():
+    session = _memory_session()
+    admin = auth.create_user(session, "admin1", "correctpass", None, "Admin")
+    session.commit()
+    assert not auth.needs_onboarding(session, admin)
+
+
+def test_needs_onboarding_false_when_member_already_has_a_profile():
+    from soulmatch.models import Profile
+
+    session = _memory_session()
+    member = auth.create_user(session, "member1", "correctpass", None, "Member")
+    session.commit()
+    session.add(Profile(full_name="Existing Candidate", gender="Bride", owner_user_id=member.id, stage="New"))
+    session.commit()
+    assert not auth.needs_onboarding(session, member)
