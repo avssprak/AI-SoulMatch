@@ -12,7 +12,7 @@ from pathlib import Path
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from soulmatch import payments
+from soulmatch import config, payments
 from soulmatch.models import Base, Subscription, User, WebhookEvent
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -35,6 +35,47 @@ def _load(name: str) -> dict:
 
 
 # --- signature verification --------------------------------------------------
+
+# --- subscription creation: total_count must fit the billing interval --------
+# Razorpay's total_count is a count of BILLING CYCLES, not months — reusing
+# the same value for monthly and annual plans asks Razorpay for a 120-year
+# subscription on the annual path and the API 400s (found live 2026-07-14).
+
+def _mock_post(monkeypatch, captured: dict):
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"short_url": "https://rzp.io/i/mock"}
+
+    def fake_post(url, **kwargs):
+        captured["url"] = url
+        captured["json"] = kwargs.get("json")
+        return _Resp()
+
+    monkeypatch.setattr(payments.requests, "post", fake_post)
+
+
+def test_razorpay_monthly_uses_120_cycles(monkeypatch):
+    monkeypatch.setattr(config, "RAZORPAY_KEY_ID", "key_id")
+    monkeypatch.setattr(config, "RAZORPAY_KEY_SECRET", "key_secret")
+    monkeypatch.setattr(config, "RAZORPAY_PLAN_PLUS_MONTHLY", "plan_monthly")
+    captured: dict = {}
+    _mock_post(monkeypatch, captured)
+    payments.create_razorpay_subscription_checkout(OWNER, "plus", "monthly")
+    assert captured["json"]["total_count"] == 120
+
+
+def test_razorpay_annual_uses_10_cycles_not_120(monkeypatch):
+    monkeypatch.setattr(config, "RAZORPAY_KEY_ID", "key_id")
+    monkeypatch.setattr(config, "RAZORPAY_KEY_SECRET", "key_secret")
+    monkeypatch.setattr(config, "RAZORPAY_PLAN_PLUS_ANNUAL", "plan_annual")
+    captured: dict = {}
+    _mock_post(monkeypatch, captured)
+    payments.create_razorpay_subscription_checkout(OWNER, "plus", "annual")
+    assert captured["json"]["total_count"] == 10
+
 
 def test_razorpay_signature_roundtrip():
     body = b'{"event":"subscription.activated"}'

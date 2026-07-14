@@ -89,7 +89,11 @@ def create_razorpay_subscription_checkout(owner_id: int, plan: str, interval: st
         json={
             "plan_id": plan_id,
             "customer_notify": 1,
-            "total_count": 120,  # ~10 years of monthly cycles; Razorpay requires a finite count
+            # Razorpay requires a finite cycle count, and total_count counts
+            # BILLING CYCLES, not months — 120 monthly cycles is 10 years, but
+            # the same 120 on an annual plan is 120 years, which the API 400s
+            # on. 10 cycles gives an annual plan the same ~10-year horizon.
+            "total_count": 10 if interval == "annual" else 120,
             "notes": {"owner_user_id": str(owner_id), "plan": plan, "interval": interval},
         },
         timeout=30,
