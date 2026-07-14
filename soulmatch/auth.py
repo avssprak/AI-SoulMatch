@@ -39,6 +39,12 @@ _PBKDF2_ITERATIONS = 260_000
 ADMIN_ROLE = "Admin"
 MEMBER_ROLE = "Member"
 SESSION_TOKEN_TTL_SECONDS = 7 * 24 * 3600
+# V5-5-1: the token minted at login/signup keeps its full week of "remember
+# me" grace before the member's first return visit. Every restore from the
+# URL after that rotates to this much shorter window instead of re-minting
+# another 7 days — so a URL that leaks (copied, screenshotted, shared) after
+# first use stays a live credential for hours, not most of a week.
+SESSION_TOKEN_ROTATE_TTL_SECONDS = 24 * 3600
 MIN_PASSWORD_LENGTH = 8
 
 # V3-5-3 login rate-limiting: a table (not an in-process counter) so a

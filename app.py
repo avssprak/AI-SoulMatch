@@ -48,6 +48,16 @@ if auth.current_user() is None:
                     "full_name": restored.full_name, "role": restored.role,
                     "plan": restored.plan,
                 }
+                # V5-5-1: rotate to a fresh, short-lived token on every restore
+                # instead of leaving the original 7-day token sitting in the
+                # URL bar for its whole life — shrinks how long a
+                # copied/screenshotted/shared link stays a live credential.
+                # (The full fix — moving the token out of the URL into a
+                # cookie — needs real-browser QA of the login/refresh/
+                # logout-everywhere/password-change paths; tracked as V5-5-1b.)
+                st.query_params["token"] = auth.mint_session_token(
+                    restored, ttl_seconds=auth.SESSION_TOKEN_ROTATE_TTL_SECONDS
+                )
             else:
                 del st.query_params["token"]
 
