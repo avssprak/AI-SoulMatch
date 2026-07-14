@@ -22,20 +22,30 @@ GRACE_DAYS = 7
 # None = unlimited. Keep this the only place plan differences are encoded —
 # every gate in the app reads from here rather than branching on plan name.
 PLAN_LIMITS = {
-    "free": {"ai_actions": 15, "profiles": 25, "children": 1,
+    "free": {"ai_actions": 15, "profiles": 25, "profiles_per_month": 10, "children": 1,
              "ai_explanations": False, "nl_search": False, "bulk_imports": 0},
-    "plus": {"ai_actions": 150, "profiles": None, "children": 1,
+    "plus": {"ai_actions": 150, "profiles": 200, "profiles_per_month": 30, "children": 1,
              "ai_explanations": True, "nl_search": True, "bulk_imports": 1},
-    "pro": {"ai_actions": 500, "profiles": None, "children": 3,
+    "pro": {"ai_actions": 500, "profiles": 1000, "profiles_per_month": 100, "children": 3,
             "ai_explanations": True, "nl_search": True, "bulk_imports": None},
 }
 
 # Display-only; kept alongside PLAN_LIMITS so the pricing table on My Plan
 # and the landing page can never drift from what's actually enforced here.
-PLAN_PRICES_INR = {"free": 0, "plus": 149, "pro": 399}
+PLAN_PRICES_INR = {"free": 0, "plus": 199, "pro": 499}
 PLAN_PRICES_INR_ANNUAL = {"free": 0, "plus": 1499, "pro": 3999}
-PLAN_PRICES_USD = {"free": 0, "plus": 4.99, "pro": 9.99}
-PLAN_PRICES_USD_ANNUAL = {"free": 0, "plus": 49, "pro": 99}
+PLAN_PRICES_USD = {"free": 0, "plus": 9.99, "pro": 14.99}
+PLAN_PRICES_USD_ANNUAL = {"free": 0, "plus": 79.99, "pro": 119.99}
+
+
+def annual_discount_pct(plan: str, currency: str) -> int:
+    """Approx % saved by paying annually vs. 12x the monthly price, rounded
+    to the nearest whole percent for display on the pricing cards."""
+    monthly = (PLAN_PRICES_INR if currency == "INR" else PLAN_PRICES_USD)[plan]
+    annual = (PLAN_PRICES_INR_ANNUAL if currency == "INR" else PLAN_PRICES_USD_ANNUAL)[plan]
+    if not monthly:
+        return 0
+    return round((1 - annual / (monthly * 12)) * 100)
 
 AI_ACTIONS = ("extract", "recommend", "nl_search")
 
@@ -126,29 +136,81 @@ def can_use_nl_search(user: dict) -> bool:
 
 
 UPGRADE_TEASE = (
-    "🔒 **Why this match works** — AI match explanations are on the Plus plan (₹149/mo). "
+    f"🔒 **Why this match works** — AI match explanations are on the Plus plan (₹{PLAN_PRICES_INR['plus']}/mo). "
     "[See plans](#) on **My Plan**."
 )
 NL_SEARCH_TEASE = (
-    "🔒 Natural-language search is on the Plus plan (₹149/mo). See **My Plan** to upgrade."
+    f"🔒 Natural-language search is on the Plus plan (₹{PLAN_PRICES_INR['plus']}/mo). See **My Plan** to upgrade."
 )
 
 
-def can_add_profile(session: Session, user: dict) -> tuple[bool, str]:
-    """Whether this owner may create one more Profile row under their plan's
-    cap. Call before every Profile-create path (Ingest auto-process, Ingest
-    manual save, Profiles Add Manually)."""
-    limit = limits_for(user.get("plan", "free"))["profiles"]
-    if limit is None:
-        return True, ""
+@dataclass
+class ProfileUsage:
+    used_this_month: int
+    monthly_limit: int | None  # None = unlimited
+    total: int
+    total_limit: int | None  # None = unlimited
+    resets_on: date
+
+
+def profile_usage_status(session: Session, user: dict, *, today: date | None = None) -> ProfileUsage:
+    """Profiles added this calendar month plus the lifetime total, for
+    display on My Plan (V3-2). Mirrors quota_status()'s AI-actions shape."""
+    plan_limits = limits_for(user.get("plan", "free"))
     owner_id = user["id"]
-    count = session.scalar(
+    used_this_month = session.scalar(
+        select(func.count()).select_from(
+            owned(
+                select(Profile.id).where(Profile.created_at >= _month_start(today)),
+                Profile, owner_id,
+            ).subquery()
+        )
+    ) or 0
+    total = session.scalar(
         select(func.count()).select_from(owned(select(Profile.id), Profile, owner_id).subquery())
     ) or 0
-    if count >= limit:
-        return False, (
-            f"Free plan stores up to {limit} candidate profiles — upgrade to Plus for unlimited."
-        )
+    return ProfileUsage(
+        used_this_month=used_this_month,
+        monthly_limit=plan_limits["profiles_per_month"],
+        total=total,
+        total_limit=plan_limits["profiles"],
+        resets_on=_next_month_start(today),
+    )
+
+
+def can_add_profile(session: Session, user: dict, *, today: date | None = None) -> tuple[bool, str]:
+    """Whether this owner may create one more Profile row under their plan's
+    total cap and monthly cap. Call before every Profile-create path (Ingest
+    auto-process, Ingest manual save, Profiles Add Manually)."""
+    plan_limits = limits_for(user.get("plan", "free"))
+    limit = plan_limits["profiles"]
+    monthly_limit = plan_limits["profiles_per_month"]
+    owner_id = user["id"]
+
+    if limit is not None:
+        count = session.scalar(
+            select(func.count()).select_from(owned(select(Profile.id), Profile, owner_id).subquery())
+        ) or 0
+        if count >= limit:
+            return False, (
+                f"Your plan stores up to {limit} candidate profiles — upgrade for a higher limit."
+            )
+
+    if monthly_limit is not None:
+        month_count = session.scalar(
+            select(func.count()).select_from(
+                owned(
+                    select(Profile.id).where(Profile.created_at >= _month_start(today)),
+                    Profile, owner_id,
+                ).subquery()
+            )
+        ) or 0
+        if month_count >= monthly_limit:
+            return False, (
+                f"Your plan allows adding up to {monthly_limit} new profiles per month — "
+                "upgrade for a higher limit or try again next month."
+            )
+
     return True, ""
 
 

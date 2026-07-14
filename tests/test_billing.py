@@ -130,16 +130,45 @@ def test_can_add_profile_below_cap():
     assert message == ""
 
 
-def test_can_add_profile_unlimited_for_plus():
+def test_can_add_profile_within_caps_for_plus():
     session = _memory_session()
     _seed_users(session)
-    for i in range(100):
+    for i in range(10):
         session.add(Profile(owner_user_id=OWNER, full_name=f"P{i}", gender="Bride"))
     session.commit()
 
     user = {"id": OWNER, "plan": "plus"}
     ok, message = billing.can_add_profile(session, user)
     assert ok is True
+
+
+def test_can_add_profile_at_total_cap_for_plus():
+    session = _memory_session()
+    _seed_users(session)
+    limit = billing.PLAN_LIMITS["plus"]["profiles"]
+    old_month = date(2020, 1, 1)
+    for i in range(limit):
+        session.add(Profile(owner_user_id=OWNER, full_name=f"P{i}", gender="Bride", created_at=old_month))
+    session.commit()
+
+    user = {"id": OWNER, "plan": "plus"}
+    ok, message = billing.can_add_profile(session, user, today=date(2020, 2, 15))
+    assert ok is False
+    assert str(limit) in message
+
+
+def test_can_add_profile_at_monthly_cap_for_plus():
+    session = _memory_session()
+    _seed_users(session)
+    monthly_limit = billing.PLAN_LIMITS["plus"]["profiles_per_month"]
+    for i in range(monthly_limit):
+        session.add(Profile(owner_user_id=OWNER, full_name=f"P{i}", gender="Bride"))
+    session.commit()
+
+    user = {"id": OWNER, "plan": "plus"}
+    ok, message = billing.can_add_profile(session, user)
+    assert ok is False
+    assert str(monthly_limit) in message
 
 
 def test_can_add_profile_scoped_to_owner():

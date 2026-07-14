@@ -577,6 +577,7 @@ def _pricing_cards_html(currency: str) -> str:
         items = [
             f"{limits['ai_actions']} AI actions/mo",
             "Unlimited profiles" if limits["profiles"] is None else f"{limits['profiles']} profiles",
+            f"Up to {limits['profiles_per_month']} new profiles/month",
             "AI match explanations" if limits["ai_explanations"] else "Koota scores (always free)",
             "Natural-language search" if limits["nl_search"] else "Structured filters",
             "Unlimited bulk imports" if bulk is None else f"{bulk} bulk import(s)/mo" if bulk else "Manual import only",

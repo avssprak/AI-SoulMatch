@@ -26,6 +26,7 @@ theme.page_header("My Plan", "Your subscription, AI-action usage, and what each 
 
 with get_session() as session:
     status = billing.quota_status(session, current_user)
+    profile_usage = billing.profile_usage_status(session, current_user)
 
 c1, c2 = st.columns([1, 2])
 with c1:
@@ -45,6 +46,13 @@ with c2:
             f"You've used all {status.limit} AI actions this month — upgrade below or wait "
             f"until {status.resets_on:%d %b} for the reset."
         )
+
+    monthly_limit_text = "Unlimited" if profile_usage.monthly_limit is None else str(profile_usage.monthly_limit)
+    st.markdown(f"**Profiles added this month:** {profile_usage.used_this_month} / {monthly_limit_text}")
+    if profile_usage.monthly_limit is not None:
+        st.progress(min(profile_usage.used_this_month / profile_usage.monthly_limit, 1.0))
+    total_limit_text = "unlimited" if profile_usage.total_limit is None else str(profile_usage.total_limit)
+    st.caption(f"{profile_usage.total} / {total_limit_text} total profiles stored · resets on {profile_usage.resets_on:%d %b %Y}.")
 
 tz_options = COMMON_TIMEZONES if current_timezone in COMMON_TIMEZONES else [current_timezone, *COMMON_TIMEZONES]
 new_timezone = st.selectbox(
@@ -100,10 +108,13 @@ for col, (plan_key, label) in zip(plan_cols, plan_details):
             is_current = plan_key == actual_plan
             st.markdown(f"### {label}" + (" ✅ current" if is_current else ""))
             st.markdown(f"**{symbol}{price}{period_label}**" if price else "**Free**")
+            if interval == "annual" and price:
+                st.caption(f"Approx {billing.annual_discount_pct(plan_key, currency)}% off vs. paying monthly.")
             st.markdown(f"- {limits['ai_actions']} AI actions/mo")
             st.markdown(
                 "- " + ("Unlimited profiles" if limits["profiles"] is None else f"{limits['profiles']} profiles")
             )
+            st.markdown(f"- Up to {limits['profiles_per_month']} new profiles/month")
             st.markdown(f"- {limits['children']} child/children")
             st.markdown("- " + ("✅" if limits["ai_explanations"] else "❌") + " AI match explanations")
             st.markdown("- " + ("✅" if limits["nl_search"] else "❌") + " Natural-language search")

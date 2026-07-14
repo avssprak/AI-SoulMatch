@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 
 from soulmatch import auth, billing, theme
 from soulmatch.db import get_session
-from soulmatch.models import PLANS, Profile, User
+from soulmatch.models import PLANS, Profile, Subscription, User
 from soulmatch.timezones import to_local
 from soulmatch.ui import flash, show_flash
 
@@ -30,6 +30,13 @@ with get_session() as session:
             select(Profile.owner_user_id, func.count(Profile.id)).group_by(Profile.owner_user_id)
         ).all()
     )
+    # Latest subscription row per owner — status is left to the gateway, but
+    # interval/current_period_end are what the operator needs to answer
+    # "monthly or annual, and when does it renew/expire" without leaving
+    # this page (V3-3 Subscription rows are webhook-maintained).
+    latest_subs: dict[int, Subscription] = {}
+    for sub in session.scalars(select(Subscription).order_by(Subscription.updated_at.asc())).all():
+        latest_subs[sub.owner_user_id] = sub
 
 member_count = sum(1 for u in users if u.role == auth.MEMBER_ROLE)
 c1, c2, c3 = st.columns(3)
@@ -37,13 +44,22 @@ c1.metric("Members", member_count)
 c2.metric("On paid plans", sum(1 for u in users if u.plan in ("plus", "pro")))
 c3.metric("Active accounts", sum(1 for u in users if u.is_active))
 
-rows = [{
-    "ID": u.id, "Email / Username": u.email or u.username, "Name": u.full_name or "—",
-    "Role": u.role, "Plan": u.plan, "Profiles": profile_counts.get(u.id, 0),
-    "Active": "Yes" if u.is_active else "No",
-    "Joined": to_local(u.created_at, current_user.get("timezone")).strftime("%d %b %Y") if u.created_at else "—",
-    "Last Login": to_local(u.last_login, current_user.get("timezone")).strftime("%d %b %Y %H:%M") if u.last_login else "Never",
-} for u in users]
+rows = []
+for u in users:
+    sub = latest_subs.get(u.id)
+    billing_interval = sub.interval.capitalize() if sub and sub.interval else "—"
+    period_end = (
+        to_local(sub.current_period_end, current_user.get("timezone")).strftime("%d %b %Y")
+        if sub and sub.current_period_end else "—"
+    )
+    rows.append({
+        "ID": u.id, "Email / Username": u.email or u.username, "Name": u.full_name or "—",
+        "Role": u.role, "Plan": u.plan, "Billing": billing_interval, "Renews / Expires": period_end,
+        "Profiles": profile_counts.get(u.id, 0),
+        "Active": "Yes" if u.is_active else "No",
+        "Joined": to_local(u.created_at, current_user.get("timezone")).strftime("%d %b %Y") if u.created_at else "—",
+        "Last Login": to_local(u.last_login, current_user.get("timezone")).strftime("%d %b %Y %H:%M") if u.last_login else "Never",
+    })
 st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
 st.divider()
