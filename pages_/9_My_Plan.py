@@ -160,51 +160,41 @@ for col, (plan_key, label) in zip(plan_cols, plan_details):
             )
 
             checkout_key = f"_checkout_url_{plan_key}_{interval}_{currency}"
+
+            def _start_checkout(*, cancel_existing: bool) -> None:
+                with get_session() as session:
+                    try:
+                        url = payments.start_checkout(
+                            session, owner, plan_key, interval, currency, cancel_existing=cancel_existing,
+                        )
+                    except (billing.PaymentConfigError, requests.RequestException) as e:
+                        st.error(str(e))
+                    else:
+                        st.session_state[checkout_key] = url
+
             if plan_key == "free":
                 if is_current_exact:
                     st.caption("You're on Free.")
             elif is_current_exact and plan_status == "paused":
+                # The old subscription is already being wound down by the
+                # earlier Pause action (cancel_subscription_at_period_end) —
+                # nothing further to cancel here.
                 if st.button(f"Resume {label}", key=f"resume_{plan_key}", type="primary"):
-                    with get_session() as session:
-                        try:
-                            if currency == "INR":
-                                url = payments.create_razorpay_subscription_checkout(owner, plan_key, interval)
-                            else:
-                                url = payments.create_stripe_checkout_session(owner, plan_key, interval)
-                        except (billing.PaymentConfigError, requests.RequestException) as e:
-                            st.error(str(e))
-                        else:
-                            st.session_state[checkout_key] = url
+                    _start_checkout(cancel_existing=False)
             elif is_current_plan and not is_current_exact:
                 # Same plan, different billing interval — e.g. Plus Monthly
-                # viewing the Annual toggle. Starts a fresh checkout for the
-                # new interval exactly like an upgrade; the gateway webhook
-                # updates plan/interval on the resulting subscription.charged
-                # the same way a plan change does.
+                # viewing the Annual toggle. cancel_existing=True stops the
+                # Monthly subscription renewing before starting the Annual
+                # one, so the member is never being billed on both at once.
                 switch_label = "Switch to annual billing" if interval == "annual" else "Switch to monthly billing"
                 if st.button(switch_label, key=f"switch_interval_{plan_key}"):
-                    with get_session() as session:
-                        try:
-                            if currency == "INR":
-                                url = payments.create_razorpay_subscription_checkout(owner, plan_key, interval)
-                            else:
-                                url = payments.create_stripe_checkout_session(owner, plan_key, interval)
-                        except (billing.PaymentConfigError, requests.RequestException) as e:
-                            st.error(str(e))
-                        else:
-                            st.session_state[checkout_key] = url
+                    _start_checkout(cancel_existing=True)
             elif not is_current_plan:
+                # A different plan entirely — same double-billing risk as an
+                # interval switch if the member is already paying for
+                # something else, so cancel that first too.
                 if st.button(f"Upgrade to {label}" if price else f"Switch to {label}", key=f"upgrade_{plan_key}"):
-                    with get_session() as session:
-                        try:
-                            if currency == "INR":
-                                url = payments.create_razorpay_subscription_checkout(owner, plan_key, interval)
-                            else:
-                                url = payments.create_stripe_checkout_session(owner, plan_key, interval)
-                        except (billing.PaymentConfigError, requests.RequestException) as e:
-                            st.error(str(e))
-                        else:
-                            st.session_state[checkout_key] = url
+                    _start_checkout(cancel_existing=True)
             if st.session_state.get(checkout_key):
                 st.link_button("Continue to checkout →", st.session_state[checkout_key], type="primary")
 

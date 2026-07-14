@@ -271,6 +271,32 @@ def cancel_subscription_at_period_end(session: Session, owner_id: int) -> None:
         ).raise_for_status()
 
 
+def start_checkout(
+    session: Session, owner_id: int, plan: str, interval: str, currency: str, *, cancel_existing: bool = False,
+) -> str:
+    """Single entry point My Plan uses for every "start a subscription"
+    button: first subscribe, upgrade to a different plan, or switch the
+    current plan's billing interval.
+
+    create_razorpay_subscription_checkout/create_stripe_checkout_session
+    always start a brand-new gateway subscription — neither one touches
+    whatever the member was already on. Called directly for a first-time
+    subscribe that's harmless (nothing to cancel), but for an upgrade or an
+    interval switch it left two live subscriptions both billing the member
+    (found while adding the V5-7 interval-switch button). With
+    cancel_existing=True, any subscription still gateway-side ACTIVE is
+    cancelled-at-period-end first — if that cancellation fails, the
+    exception propagates and no new subscription is started, so a failure
+    here never results in the double-billing this exists to prevent."""
+    if cancel_existing:
+        existing = _latest_subscription(session, owner_id)
+        if existing is not None and existing.status == "active":
+            cancel_subscription_at_period_end(session, owner_id)
+    if currency == "INR":
+        return create_razorpay_subscription_checkout(owner_id, plan, interval)
+    return create_stripe_checkout_session(owner_id, plan, interval)
+
+
 def _apply_status_to_user(session: Session, owner_id: int, plan: str | None, new_status: str, grace_days: int | None) -> None:
     user = session.get(User, owner_id)
     if user is None:

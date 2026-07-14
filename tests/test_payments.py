@@ -9,10 +9,11 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from soulmatch import config, payments
+from soulmatch import billing, config, payments
 from soulmatch.models import Base, Subscription, User, WebhookEvent
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -118,6 +119,87 @@ def test_is_new_event_only_true_once():
     # same event id, different provider -> distinct
     assert payments.is_new_event(session, "razorpay", "evt_1") is True
     assert session.scalar(select(WebhookEvent)) is not None
+
+
+# --- start_checkout: switching plan/interval must not double-bill -----------
+# create_*_checkout always starts a brand-new gateway subscription without
+# touching whatever the member already had — left alone, an interval switch
+# or plan upgrade left two live subscriptions both billing the member
+# (found immediately after shipping the V5-7 interval-switch button).
+
+def _mock_post_sequence(monkeypatch):
+    calls: list[str] = []
+
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"short_url": "https://rzp.io/i/mock"}
+
+    def fake_post(url, **kwargs):
+        calls.append(url)
+        return _Resp()
+
+    monkeypatch.setattr(payments.requests, "post", fake_post)
+    return calls
+
+
+def test_start_checkout_cancels_active_subscription_first(monkeypatch):
+    session = _memory_session()
+    _seed_owner(session)
+    payments.apply_razorpay_event(session, _load("razorpay_subscription_activated.json"))  # plus/monthly, active
+    monkeypatch.setattr(config, "RAZORPAY_KEY_ID", "key_id")
+    monkeypatch.setattr(config, "RAZORPAY_KEY_SECRET", "key_secret")
+    monkeypatch.setattr(config, "RAZORPAY_PLAN_PLUS_ANNUAL", "plan_annual")
+    calls = _mock_post_sequence(monkeypatch)
+
+    payments.start_checkout(session, OWNER, "plus", "annual", "INR", cancel_existing=True)
+
+    assert len(calls) == 2
+    assert calls[0].endswith("/subscriptions/sub_test_001/cancel")  # cancel happens first
+    assert calls[1].endswith("/subscriptions")  # then the new one is created
+
+
+def test_start_checkout_skips_cancel_when_no_active_subscription(monkeypatch):
+    session = _memory_session()
+    _seed_owner(session)  # free — no subscription at all
+    monkeypatch.setattr(config, "RAZORPAY_KEY_ID", "key_id")
+    monkeypatch.setattr(config, "RAZORPAY_KEY_SECRET", "key_secret")
+    monkeypatch.setattr(config, "RAZORPAY_PLAN_PLUS_MONTHLY", "plan_monthly")
+    calls = _mock_post_sequence(monkeypatch)
+
+    payments.start_checkout(session, OWNER, "plus", "monthly", "INR", cancel_existing=True)
+
+    assert len(calls) == 1  # no cancel call — nothing to cancel
+    assert calls[0].endswith("/subscriptions")
+
+
+def test_start_checkout_skips_cancel_when_flag_is_false(monkeypatch):
+    session = _memory_session()
+    _seed_owner(session)
+    payments.apply_razorpay_event(session, _load("razorpay_subscription_activated.json"))
+    monkeypatch.setattr(config, "RAZORPAY_KEY_ID", "key_id")
+    monkeypatch.setattr(config, "RAZORPAY_KEY_SECRET", "key_secret")
+    monkeypatch.setattr(config, "RAZORPAY_PLAN_PLUS_MONTHLY", "plan_monthly")
+    calls = _mock_post_sequence(monkeypatch)
+
+    payments.start_checkout(session, OWNER, "plus", "monthly", "INR", cancel_existing=False)
+
+    assert len(calls) == 1
+    assert calls[0].endswith("/subscriptions")
+
+
+def test_start_checkout_aborts_new_subscription_if_cancel_fails(monkeypatch):
+    session = _memory_session()
+    _seed_owner(session)
+    payments.apply_razorpay_event(session, _load("razorpay_subscription_activated.json"))
+    monkeypatch.setattr(config, "RAZORPAY_KEY_ID", "")  # cancel_subscription_at_period_end raises
+    calls = _mock_post_sequence(monkeypatch)
+
+    with pytest.raises(billing.PaymentConfigError):
+        payments.start_checkout(session, OWNER, "plus", "annual", "INR", cancel_existing=True)
+    assert calls == []  # never got as far as creating the new subscription
 
 
 # --- current_billing_interval (V5-7: same-plan interval switch on My Plan) ---
