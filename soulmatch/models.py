@@ -127,6 +127,19 @@ class User(Base):
     # check (any owned profile already => treat as onboarded) rather than in
     # a migration, since "has data" is cheap to check and never wrong.
     onboarded_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # V5-6: email verification at signup. NULL = never proved ownership of the
+    # address; the gate only applies while soulmatch.mailer.is_configured().
+    # Pre-existing accounts are backfilled to "verified" when the column is
+    # first added (see db._COLUMN_MIGRATIONS) — never lock out the live cohort.
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime)
+    verification_code: Mapped[str | None] = mapped_column(String(16))
+    verification_sent_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # Wrong entries against the current code (5 locks it, forcing a resend)
+    # and sends inside the rolling hour anchored at verification_window_start
+    # (3/hour cap on resends).
+    verification_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    verification_sends: Mapped[int] = mapped_column(Integer, default=0)
+    verification_window_start: Mapped[datetime | None] = mapped_column(DateTime)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_login: Mapped[datetime | None] = mapped_column(DateTime)

@@ -67,6 +67,17 @@ STRIPE_PRICE_PLUS_ANNUAL = os.getenv("STRIPE_PRICE_PLUS_ANNUAL", "")
 STRIPE_PRICE_PRO_MONTHLY = os.getenv("STRIPE_PRICE_PRO_MONTHLY", "")
 STRIPE_PRICE_PRO_ANNUAL = os.getenv("STRIPE_PRICE_PRO_ANNUAL", "")
 
+# --- Email (V5-6): signup verification codes -------------------------------
+# All blank by default — soulmatch.mailer.is_configured() is then False and
+# the email-verification gate self-disables (signup/sign-in behave exactly
+# as before), so local dev and tests need no mail server. [HUMAN]: provision
+# an SMTP account (SES/Zoho/Brevo) and set these in .env to enable it.
+SMTP_HOST = os.getenv("SMTP_HOST", "")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER = os.getenv("SMTP_USER", "")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+SMTP_FROM = os.getenv("SMTP_FROM", "SoulMatch by RedPrana <no-reply@redprana.com>")
+
 # Optional error alerting (V3-4-4). Blank = disabled; sentry-sdk isn't a
 # hard dependency (see soulmatch.errors.init_error_reporting) — the app runs
 # fine without it.

@@ -79,73 +79,150 @@ if auth.current_user() is None:
                 'SoulMatch by RedPrana</div>',
                 unsafe_allow_html=True,
             )
-            tab_signin, tab_signup = st.tabs(["Sign in", "Create account"])
-            with tab_signin:
-                st.caption("Sign in to continue to your private workspace.")
-                with st.form("login"):
-                    username = st.text_input("Email or username")
-                    password = st.text_input("Password", type="password")
-                    submitted = st.form_submit_button("Sign in", type="primary", use_container_width=True)
-                if submitted:
-                    locked = False
+            # V5-6: while an email verification is pending, the card shows the
+            # code-entry form instead of the sign-in/sign-up tabs. No session
+            # exists yet — the account stays locked until the code checks out.
+            pending_verify_id = st.session_state.get("pending_verification_user_id")
+            if pending_verify_id is not None:
+                st.subheader("Check your email")
+                st.caption(
+                    f"We sent a 6-digit code to "
+                    f"**{st.session_state.get('pending_verification_email', 'your email')}**. "
+                    "Enter it below to finish setting up your account."
+                )
+                with st.form("verify_email"):
+                    v_code = st.text_input("Verification code", max_chars=6)
+                    v_submitted = st.form_submit_button("Verify", type="primary", use_container_width=True)
+                if v_submitted:
                     with get_session() as session:
-                        if auth.is_locked_out(session, username):
-                            locked = True
-                        else:
-                            user = auth.authenticate(session, username, password)
-                            if user:
-                                st.session_state["user"] = {
-                                    "id": user.id, "username": user.username,
-                                    "full_name": user.full_name, "role": user.role,
-                                    "plan": user.plan,
-                                }
-                                st.query_params["token"] = auth.mint_session_token(user)
+                        v_user = session.get(auth.User, pending_verify_id)
+                        result = "expired" if v_user is None else auth.verify_email_code(session, v_user, v_code)
+                        if result == "ok":
+                            st.session_state["user"] = {
+                                "id": v_user.id, "username": v_user.username,
+                                "full_name": v_user.full_name, "role": v_user.role,
+                                "plan": v_user.plan,
+                            }
+                            st.query_params["token"] = auth.mint_session_token(v_user)
+                            del st.session_state["pending_verification_user_id"]
+                            st.session_state.pop("pending_verification_email", None)
                     if auth.current_user():
                         st.rerun()
-                    elif locked:
-                        st.error(auth.LOCKOUT_MESSAGE)
+                    elif result == "wrong":
+                        st.error("That code doesn't match — please check the email and try again.")
+                    elif result == "locked":
+                        st.error("Too many incorrect tries. Use **Send a new code** below.")
                     else:
-                        st.error("Invalid username or password.")
-            with tab_signup:
-                st.caption("Free to start — your data stays private to your account.")
-                with st.form("signup"):
-                    su_name = st.text_input("Your name")
-                    su_email = st.text_input("Email")
-                    su_password = st.text_input("Password", type="password")
-                    su_password2 = st.text_input("Confirm password", type="password")
-                    su_agree = st.checkbox("I agree to the Terms & Privacy Policy")
-                    su_submitted = st.form_submit_button(
-                        "Create free account", type="primary", use_container_width=True
-                    )
-                dc1, dc2 = st.columns(2)
-                if dc1.button("Privacy Policy", key="show_privacy", use_container_width=True):
-                    _show_privacy_dialog()
-                if dc2.button("Terms", key="show_terms", use_container_width=True):
-                    _show_terms_dialog()
-                if su_submitted:
-                    # Simple per-connection rate limit against scripted signup abuse.
-                    attempts = st.session_state.get("_signup_attempts", 0) + 1
-                    st.session_state["_signup_attempts"] = attempts
-                    if attempts > 5:
-                        st.error("Too many attempts — please refresh the page and try again later.")
-                    elif su_password != su_password2:
-                        st.error("Passwords do not match.")
-                    elif not su_agree:
-                        st.error("Please agree to the Terms & Privacy Policy to continue.")
-                    else:
+                        st.error("That code has expired. Use **Send a new code** below.")
+                rc1, rc2 = st.columns(2)
+                if rc1.button("Send a new code", use_container_width=True):
+                    with get_session() as session:
+                        v_user = session.get(auth.User, pending_verify_id)
                         try:
-                            with get_session() as session:
-                                new_user = auth.register_member(session, su_email, su_password, su_name)
-                                st.session_state["user"] = {
-                                    "id": new_user.id, "username": new_user.username,
-                                    "full_name": new_user.full_name, "role": new_user.role,
-                                    "plan": new_user.plan,
-                                }
-                                st.query_params["token"] = auth.mint_session_token(new_user)
+                            if v_user is not None:
+                                auth.send_verification_code(session, v_user)
+                                st.success("A new code is on its way — check your inbox.")
                         except ValueError as e:
                             st.error(str(e))
+                if rc2.button("Back to sign in", use_container_width=True):
+                    del st.session_state["pending_verification_user_id"]
+                    st.session_state.pop("pending_verification_email", None)
+                    st.rerun()
+            else:
+                tab_signin, tab_signup = st.tabs(["Sign in", "Create account"])
+                with tab_signin:
+                    st.caption("Sign in to continue to your private workspace.")
+                    with st.form("login"):
+                        username = st.text_input("Email or username")
+                        password = st.text_input("Password", type="password")
+                        submitted = st.form_submit_button("Sign in", type="primary", use_container_width=True)
+                    if submitted:
+                        locked = False
+                        unverified_user_id = None
+                        with get_session() as session:
+                            if auth.is_locked_out(session, username):
+                                locked = True
+                            else:
+                                user = auth.authenticate(session, username, password)
+                                if user and auth.verification_required(user):
+                                    # V5-6: correct password but the email was
+                                    # never verified — send a fresh code and
+                                    # show the code-entry form, not a session.
+                                    unverified_user_id = user.id
+                                    unverified_email = user.email or user.username
+                                    try:
+                                        auth.send_verification_code(session, user)
+                                    except ValueError:
+                                        pass  # rate-limited/SMTP down — form still offers resend
+                                elif user:
+                                    st.session_state["user"] = {
+                                        "id": user.id, "username": user.username,
+                                        "full_name": user.full_name, "role": user.role,
+                                        "plan": user.plan,
+                                    }
+                                    st.query_params["token"] = auth.mint_session_token(user)
                         if auth.current_user():
                             st.rerun()
+                        elif unverified_user_id is not None:
+                            st.session_state["pending_verification_user_id"] = unverified_user_id
+                            st.session_state["pending_verification_email"] = unverified_email
+                            st.rerun()
+                        elif locked:
+                            st.error(auth.LOCKOUT_MESSAGE)
+                        else:
+                            st.error("Invalid username or password.")
+                with tab_signup:
+                    st.caption("Free to start — your data stays private to your account.")
+                    with st.form("signup"):
+                        su_name = st.text_input("Your name")
+                        su_email = st.text_input("Email")
+                        su_password = st.text_input("Password", type="password")
+                        su_password2 = st.text_input("Confirm password", type="password")
+                        su_agree = st.checkbox("I agree to the Terms & Privacy Policy")
+                        su_submitted = st.form_submit_button(
+                            "Create free account", type="primary", use_container_width=True
+                        )
+                    dc1, dc2 = st.columns(2)
+                    if dc1.button("Privacy Policy", key="show_privacy", use_container_width=True):
+                        _show_privacy_dialog()
+                    if dc2.button("Terms", key="show_terms", use_container_width=True):
+                        _show_terms_dialog()
+                    if su_submitted:
+                        # Simple per-connection rate limit against scripted signup abuse.
+                        attempts = st.session_state.get("_signup_attempts", 0) + 1
+                        st.session_state["_signup_attempts"] = attempts
+                        if attempts > 5:
+                            st.error("Too many attempts — please refresh the page and try again later.")
+                        elif su_password != su_password2:
+                            st.error("Passwords do not match.")
+                        elif not su_agree:
+                            st.error("Please agree to the Terms & Privacy Policy to continue.")
+                        else:
+                            pending_signup_id = None
+                            try:
+                                with get_session() as session:
+                                    new_user = auth.register_member(session, su_email, su_password, su_name)
+                                    if auth.verification_required(new_user):
+                                        # V5-6: account created unverified — email
+                                        # a code and swap the card to code entry.
+                                        pending_signup_id = new_user.id
+                                        pending_signup_email = new_user.email or new_user.username
+                                        auth.send_verification_code(session, new_user)
+                                    else:
+                                        st.session_state["user"] = {
+                                            "id": new_user.id, "username": new_user.username,
+                                            "full_name": new_user.full_name, "role": new_user.role,
+                                            "plan": new_user.plan,
+                                        }
+                                        st.query_params["token"] = auth.mint_session_token(new_user)
+                            except ValueError as e:
+                                st.error(str(e))
+                            if auth.current_user():
+                                st.rerun()
+                            elif pending_signup_id is not None:
+                                st.session_state["pending_verification_user_id"] = pending_signup_id
+                                st.session_state["pending_verification_email"] = pending_signup_email
+                                st.rerun()
 
     landing.render_sections()
     st.stop()

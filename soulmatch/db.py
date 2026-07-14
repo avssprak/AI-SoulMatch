@@ -41,7 +41,22 @@ _COLUMN_MIGRATIONS = [
     ("users", "astro_weight", "INTEGER DEFAULT 50"),
     # V5-1-1 first-login onboarding wizard (see V5_PLAN.md Sprint V5-1)
     ("users", "onboarded_at", "DATETIME"),
+    # V5-6 email verification at signup (see V5_PLAN.md Sprint V5-6)
+    ("users", "email_verified_at", "DATETIME"),
+    ("users", "verification_code", "VARCHAR(16)"),
+    ("users", "verification_sent_at", "DATETIME"),
+    ("users", "verification_attempts", "INTEGER DEFAULT 0"),
+    ("users", "verification_sends", "INTEGER DEFAULT 0"),
+    ("users", "verification_window_start", "DATETIME"),
 ]
+
+# Run once, immediately after the named column is first ADDed — i.e. only on
+# databases that predate the column. Fresh DBs (create_all) never run these.
+_COLUMN_BACKFILLS = {
+    # V5-6: accounts that existed before verification shipped are trusted
+    # as-is — the gate must never lock out the live cohort.
+    ("users", "email_verified_at"): "UPDATE users SET email_verified_at = CURRENT_TIMESTAMP",
+}
 
 _TENANT_TABLES = ["raw_messages", "profiles", "documents", "match_results", "activities", "tasks"]
 
@@ -85,6 +100,9 @@ def _apply_column_migrations() -> None:
         if column not in existing_columns:
             with engine.begin() as conn:
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}"))
+                backfill = _COLUMN_BACKFILLS.get((table, column))
+                if backfill:
+                    conn.execute(text(backfill))
 
 
 def init_db() -> None:

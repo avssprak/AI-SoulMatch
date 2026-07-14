@@ -174,11 +174,16 @@ any page at 390 px; stepper wraps 2×2; login card usable on a phone.
 2. **V5-5-2 Self-hosted fonts.** `@import` of Google Fonts in `theme.py` is
    a render-blocking third-party call (and fails offline). Download the two
    families into `static/fonts/`, serve via `@font-face`. Landing page too.
-   **Still open** — needs the actual font binaries fetched (Google Fonts
-   or a mirror) and their license (both are OFL) included, not just a CSS
-   change.
+   - ✅ **Shipped (2026-07-14):** Inter + Playfair Display variable woff2
+     (latin subset) in `static/fonts/` with their OFL licenses;
+     `theme.FONT_FACE_CSS` shared by both stylesheets, `@import` removed.
 
 ## Sprint V5-6 — Email verification at signup
+
+✅ **Shipped (2026-07-14):** mailer, code-entry flow (signup + unverified
+sign-in), migrations with verified backfill, tests. The gate self-disables
+while `SMTP_HOST` is unset — **[HUMAN] SMTP provisioning still pending**
+before it does anything in production (see `.env.example`).
 
 **Problem.** `auth.register_member` creates the account and logs it straight
 in — any string that looks like an email works. No proof of ownership, so

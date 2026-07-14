@@ -31,7 +31,7 @@ import streamlit as st
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from . import config
+from . import config, mailer
 from .models import ROLES, EDITOR_ROLES, LoginAttempt, Profile, User, utcnow
 from .tenancy import owned
 
@@ -86,6 +86,10 @@ def create_user(
         password_hash=hash_password(password),
         full_name=full_name or None,
         role=role,
+        # V5-6: accounts created here (bootstrap admin, admin-created members)
+        # are trusted; only self-service signup (register_member) starts
+        # unverified — and only while the mailer is configured.
+        email_verified_at=utcnow(),
     )
     session.add(user)
     session.flush()
@@ -107,8 +111,90 @@ def register_member(session: Session, email: str, password: str, full_name: str 
     if session.scalar(select(User).where(User.username == email)) is not None:
         raise ValueError("An account with this email already exists. Try signing in.")
     user = create_user(session, email, password, full_name, MEMBER_ROLE, email=email)
+    if mailer.is_configured():
+        # V5-6: self-service accounts must prove ownership of the address
+        # before any session is minted — see send_verification_code below.
+        user.email_verified_at = None
     session.commit()
     return user
+
+
+# --- V5-6 email verification -------------------------------------------------
+# Code entry, not a click-link: Streamlit is a poor target for deep-link
+# callbacks, and parents on phones handle "enter the 6-digit code we emailed
+# you" more easily. The whole gate self-disables when the mailer isn't
+# configured, so dev/local/tests behave exactly as before V5-6.
+VERIFICATION_CODE_TTL_MINUTES = 30
+VERIFICATION_MAX_ATTEMPTS = 5
+VERIFICATION_MAX_SENDS_PER_HOUR = 3
+
+
+def verification_required(user: User) -> bool:
+    return mailer.is_configured() and user.email_verified_at is None
+
+
+def _naive_utc(dt: datetime | None) -> datetime | None:
+    """SQLite hands back naive datetimes while utcnow() is tz-aware — strip
+    tzinfo so arithmetic works either way (same trick as the lockout window)."""
+    return dt.replace(tzinfo=None) if dt is not None else None
+
+
+def send_verification_code(session: Session, user: User, *, now: datetime | None = None) -> None:
+    """Generate + email a fresh 6-digit code. Raises ValueError with a
+    user-displayable message if the hourly send cap is hit or SMTP fails."""
+    now = _naive_utc(now or utcnow())
+    window_start = _naive_utc(user.verification_window_start)
+    if window_start and (now - window_start) < timedelta(hours=1):
+        if (user.verification_sends or 0) >= VERIFICATION_MAX_SENDS_PER_HOUR:
+            raise ValueError("Too many codes requested — please try again in an hour.")
+        user.verification_sends = (user.verification_sends or 0) + 1
+    else:
+        user.verification_window_start = now
+        user.verification_sends = 1
+    code = f"{int.from_bytes(os.urandom(4), 'big') % 1_000_000:06d}"
+    user.verification_code = code
+    user.verification_sent_at = now
+    user.verification_attempts = 0
+    session.commit()
+    try:
+        mailer.send_email(
+            user.email or user.username,
+            "Your SoulMatch verification code",
+            f"Hello{' ' + user.full_name if user.full_name else ''},\n\n"
+            f"Your verification code is: {code}\n\n"
+            f"Enter it in the app within {VERIFICATION_CODE_TTL_MINUTES} minutes "
+            "to finish creating your account.\n\n"
+            "If you didn't sign up for SoulMatch by RedPrana, you can ignore this email.",
+        )
+    except Exception as exc:  # smtplib raises many types; all mean "not sent"
+        raise ValueError(
+            "We couldn't send the verification email just now — please try again shortly."
+        ) from exc
+
+
+def verify_email_code(session: Session, user: User, code: str, *, now: datetime | None = None) -> str:
+    """Check `code` against the current one. Returns "ok" (and marks the user
+    verified), "expired", "locked" (too many wrong tries — resend needed), or
+    "wrong"."""
+    now = _naive_utc(now or utcnow())
+    sent_at = _naive_utc(user.verification_sent_at)
+    if (
+        user.verification_code is None
+        or sent_at is None
+        or (now - sent_at) > timedelta(minutes=VERIFICATION_CODE_TTL_MINUTES)
+    ):
+        return "expired"
+    if (user.verification_attempts or 0) >= VERIFICATION_MAX_ATTEMPTS:
+        return "locked"
+    if not hmac.compare_digest(code.strip(), user.verification_code):
+        user.verification_attempts = (user.verification_attempts or 0) + 1
+        session.commit()
+        return "locked" if user.verification_attempts >= VERIFICATION_MAX_ATTEMPTS else "wrong"
+    user.email_verified_at = now
+    user.verification_code = None
+    user.verification_attempts = 0
+    session.commit()
+    return "ok"
 
 
 def _recent_failed_attempts(session: Session, username: str, *, now: datetime | None = None) -> int:
