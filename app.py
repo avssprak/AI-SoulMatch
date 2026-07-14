@@ -200,25 +200,9 @@ with st.sidebar:
         if "token" in st.query_params:
             del st.query_params["token"]
         st.rerun()
-    with st.expander("Change password"):
-        with st.form("change_password", clear_on_submit=True):
-            old_pw = st.text_input("Current password", type="password")
-            new_pw = st.text_input("New password", type="password")
-            if st.form_submit_button("Update password"):
-                with get_session() as session:
-                    user = session.get(auth.User, current["id"])
-                    if not auth.verify_password(old_pw, user.password_hash):
-                        st.error("Current password is incorrect.")
-                    else:
-                        try:
-                            auth.change_password(session, user, new_pw)
-                        except ValueError as e:
-                            st.error(str(e))
-                        else:
-                            # re-mint immediately so the current session (which still
-                            # has the old token in the URL) isn't logged out too
-                            st.query_params["token"] = auth.mint_session_token(user)
-                            st.success("Password updated.")
+    # V5-4-1: password change and timezone both moved to My Plan & Settings
+    # under one "Account settings" section — the sidebar keeps only identity
+    # + Log out, rather than splitting settings across two places.
 
 if current["needs_onboarding"]:
     # V5-1-2: a first-login member sees ONLY the Welcome wizard — no sidebar
@@ -235,7 +219,7 @@ else:
     matching = st.Page(MATCHING_PAGE, title="Match & Compare", icon=":material/favorite:")
     tasks = st.Page(TASKS_PAGE, title="Follow-Ups", icon=":material/task_alt:")
     search = st.Page(SEARCH_PAGE, title="Search & Insights", icon=":material/manage_search:")
-    my_plan = st.Page(MY_PLAN_PAGE, title="My Plan", icon=":material/workspace_premium:")
+    my_plan = st.Page(MY_PLAN_PAGE, title="My Plan & Settings", icon=":material/workspace_premium:")
     guide = st.Page(GUIDE_PAGE, title="How It Works", icon=":material/help:")
 
     # V4-1-1/V4-2-1: grouped, stepwise navigation — the menu itself teaches the
@@ -250,7 +234,7 @@ else:
         "More": [search, my_plan, guide],
     }
     if auth.is_admin(current["role"]):
-        sections["Admin"] = [st.Page(USERS_PAGE, title="Customers", icon=":material/group:")]
+        sections["Admin"] = [st.Page(USERS_PAGE, title="Members", icon=":material/group:")]
 
     nav = st.navigation(sections)
 

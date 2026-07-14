@@ -17,9 +17,9 @@ from soulmatch.ui import flash, show_flash
 current_user = auth.require_admin()
 
 theme.page_header(
-    "Customers",
+    "Members",
     "Platform operator view — every account, its plan, and account controls. "
-    "Customer data itself stays private to each member.",
+    "Member data itself stays private to each member.",
 )
 show_flash()
 

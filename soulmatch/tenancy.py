@@ -5,7 +5,7 @@ app must go through the helpers here rather than raw select()/session.get(),
 so that scoping is structural instead of per-query discipline. There is
 deliberately NO admin bypass in these helpers: on the domain pages the Admin
 works inside their own workspace exactly like a Member; operator surfaces
-(the Customers page) query the users table directly and never touch another
+(the Members page) query the users table directly and never touch another
 tenant's domain rows.
 
 tests/test_tenancy.py asserts cross-tenant invisibility for every page-level

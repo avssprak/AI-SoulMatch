@@ -22,7 +22,7 @@ actual_plan = current_user.get("actual_plan", plan)
 plan_status = current_user.get("plan_status", "free")
 current_timezone = current_user.get("timezone", DEFAULT_TIMEZONE)
 
-theme.page_header("My Plan", "Your subscription, AI-action usage, and what each plan includes.")
+theme.page_header("My Plan & Settings", "Your subscription, AI-action usage, and what each plan includes.")
 theme.help_link("billing", "❓ Billing questions?")
 
 with get_session() as session:
@@ -55,6 +55,9 @@ with c2:
     total_limit_text = "unlimited" if profile_usage.total_limit is None else str(profile_usage.total_limit)
     st.caption(f"{profile_usage.total} / {total_limit_text} total profiles stored · resets on {profile_usage.resets_on:%d %b %Y}.")
 
+st.divider()
+theme.section("Account settings")
+
 tz_options = COMMON_TIMEZONES if current_timezone in COMMON_TIMEZONES else [current_timezone, *COMMON_TIMEZONES]
 new_timezone = st.selectbox(
     "Your timezone", tz_options, index=tz_options.index(current_timezone),
@@ -71,6 +74,29 @@ if new_timezone != current_timezone:
     st.session_state["user"] = current_user
     st.success(f"Timezone updated to {new_timezone}.")
     st.rerun()
+
+# V5-4-1: moved here from a sidebar expander so account settings live in one
+# place instead of being split between the sidebar and this page.
+with st.expander("Change password"):
+    with st.form("change_password", clear_on_submit=True):
+        old_pw = st.text_input("Current password", type="password")
+        new_pw = st.text_input("New password", type="password")
+        if st.form_submit_button("Update password"):
+            with get_session() as session:
+                user_row = session.get(auth.User, owner)
+                if not auth.verify_password(old_pw, user_row.password_hash):
+                    st.error("Current password is incorrect.")
+                else:
+                    try:
+                        auth.change_password(session, user_row, new_pw)
+                    except ValueError as e:
+                        st.error(str(e))
+                    else:
+                        # re-mint immediately so the current session (which
+                        # still has the old token in the URL) isn't logged
+                        # out too
+                        st.query_params["token"] = auth.mint_session_token(user_row)
+                        st.success("Password updated.")
 
 if actual_plan != "free" and plan_status == "active":
     if st.button("Pause subscription", help="Stops billing at the end of your current period. "
