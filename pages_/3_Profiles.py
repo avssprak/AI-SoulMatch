@@ -682,9 +682,15 @@ with tab_manual:
                 "Phone", placeholder="+1 555 0100 or +91 98765 43210",
                 help="Include the country code for NRI numbers — not validated, since data often arrives messy from chats.",
             )
-            dob_input = c2.date_input("Date of Birth", value=None, min_value=date(1930, 1, 1), max_value=date.today())
-            current_location = c3.text_input("Current Location")
+            current_location = c2.text_input("Current Location")
 
+            st.caption("Birth details — needed for the horoscope score")
+            c1, c2, c3 = st.columns(3)
+            dob_input = c1.date_input("Date of Birth", value=None, min_value=date(1930, 1, 1), max_value=date.today())
+            birth_time_input = c2.text_input("Birth Time (24h HH:MM)")
+            birth_place_input = c3.text_input("Birth Place")
+
+            st.caption("Background")
             c1, c2, c3 = st.columns(3)
             religion = c1.text_input("Religion")
             caste = c2.text_input("Caste")
@@ -705,6 +711,7 @@ with tab_manual:
                     age=age_from_dob(dob_input) if dob_input else age,
                     phone=phone or None,
                     dob=dob_input, current_location=current_location or None,
+                    birth_time=birth_time_input or None, birth_place=birth_place_input or None,
                     religion=religion or None, caste=caste or None, gothram=gothram or None,
                     qualification=qualification or None, occupation=occupation or None,
                 )
@@ -738,8 +745,15 @@ with tab_manual:
                                                   created_by_user_id=current_user["id"]))
                             session.commit()
                             new_id = profile.id
+                            birth_place = pending.get("birth_place")
                             del st.session_state["pending_manual_profile"]
                             st.success(f"Created profile #{new_id}.")
+                            if birth_place and geo_lookup(birth_place) is None:
+                                st.warning(
+                                    f"'{birth_place}' wasn't found in the offline place database — "
+                                    "astrology charts need an exact/nearby city name to compute. Try a "
+                                    "larger nearby city."
+                                )
                             # Matching doesn't yet support deep-linking a specific
                             # candidate (that lands with the V4-4 scoreboard), so
                             # this just opens the page rather than preselecting.
