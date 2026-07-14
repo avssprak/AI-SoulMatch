@@ -9,7 +9,7 @@ from soulmatch.db import get_session
 from soulmatch.insights import stale_cases, stale_shortlisted
 from soulmatch.models import PIPELINE_STAGE_GROUPS, Activity, MatchResult, Profile, RawMessage, Task
 from soulmatch.nav import (
-    INGEST_PAGE, MATCHING_PAGE, MY_CHILD_PAGE, PROFILES_PAGE, SEARCH_PAGE,
+    GUIDE_PAGE, INGEST_PAGE, MATCHING_PAGE, MY_CHILD_PAGE, PROFILES_PAGE, SEARCH_PAGE,
     TASKS_OVERDUE_PREF_KEY, TASKS_PAGE, open_profile_button,
 )
 from soulmatch.tasks import overdue_tasks, pending_tasks
@@ -138,6 +138,10 @@ if current_step:
         st.switch_page(target)
 else:
     st.caption("🎉 You've completed every step of the journey — keep going below.")
+
+if current_step:
+    if st.button("📖 New here? Read how it works →", key="dash_guide_link", type="tertiary"):
+        st.switch_page(GUIDE_PAGE)
 
 st.divider()
 

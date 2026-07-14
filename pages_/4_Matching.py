@@ -221,6 +221,7 @@ with tab_scoreboard:
         "Rank every candidate against one 'main' profile — e.g. your child's horoscope stays "
         "fixed while you browse everyone on the other side, ranked by a blended score."
     )
+    theme.help_link("matching", "❓ What do these scores mean?")
 
     # V4-4-1: astro_weight is a per-member preference (stored on User), not a
     # per-match setting — persisted immediately when the slider moves so it's

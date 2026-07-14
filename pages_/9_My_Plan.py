@@ -23,6 +23,7 @@ plan_status = current_user.get("plan_status", "free")
 current_timezone = current_user.get("timezone", DEFAULT_TIMEZONE)
 
 theme.page_header("My Plan", "Your subscription, AI-action usage, and what each plan includes.")
+theme.help_link("billing", "❓ Billing questions?")
 
 with get_session() as session:
     status = billing.quota_status(session, current_user)

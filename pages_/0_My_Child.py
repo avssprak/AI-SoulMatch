@@ -75,6 +75,7 @@ else:
             )
             st.caption("Everything under **Match & Compare** is scored against this profile.")
             next_step_button("Score candidates against this profile →", MATCHING_PAGE, key="my_child_score_btn")
+            theme.help_link("child", "❓ Why does birth time matter?")
 
         if can_write:
             with st.expander("✏️ Edit details"):

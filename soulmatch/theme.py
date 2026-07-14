@@ -398,6 +398,18 @@ def journey_stepper(steps: list[tuple[bool, str]]) -> None:
     st.markdown("".join(html), unsafe_allow_html=True)
 
 
+def help_link(anchor: str, label: str = "❓ How does this work?") -> None:
+    """V5-2-2: a small caption-style link to the Guide page that auto-expands
+    the given section (see soulmatch/guide_content.py for valid anchors).
+    Use on any page whose flow benefits from a "why"/"how" explanation
+    without cluttering the page itself with paragraphs of copy."""
+    from soulmatch.nav import GUIDE_PAGE  # local import: avoids a nav<->theme cycle
+
+    if st.button(label, key=f"_help_link_{anchor}", type="tertiary"):
+        st.session_state["guide_anchor"] = anchor
+        st.switch_page(GUIDE_PAGE)
+
+
 def empty_state(title: str, hint: str = "", icon: str = "✦") -> None:
     """Friendly branded placeholder for empty lists/tables."""
     st.markdown(

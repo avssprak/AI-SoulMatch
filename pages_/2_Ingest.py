@@ -158,6 +158,7 @@ def _auto_process_raw_messages(message_ids: list[int], current_user: dict) -> No
 current_user = auth.require_login()
 owner = owner_id_of(current_user)
 theme.page_header("Add Candidates", "Bring in WhatsApp chat exports and documents — AI turns them into structured candidate profiles.")
+theme.help_link("candidates", "❓ How do I export a WhatsApp chat?")
 show_flash()
 show_next_step()
 

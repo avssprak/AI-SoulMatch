@@ -6,7 +6,7 @@ from soulmatch import auth, billing, landing, legal, theme
 from soulmatch.db import get_session, init_db
 from soulmatch.errors import init_error_reporting
 from soulmatch.nav import (
-    DASHBOARD_PAGE, INGEST_PAGE, MATCHING_PAGE, MY_CHILD_PAGE, MY_PLAN_PAGE,
+    DASHBOARD_PAGE, GUIDE_PAGE, INGEST_PAGE, MATCHING_PAGE, MY_CHILD_PAGE, MY_PLAN_PAGE,
     PROFILES_PAGE, SEARCH_PAGE, TASKS_PAGE, USERS_PAGE, WELCOME_PAGE,
 )
 from soulmatch.timezones import to_local
@@ -236,6 +236,7 @@ else:
     tasks = st.Page(TASKS_PAGE, title="Follow-Ups", icon=":material/task_alt:")
     search = st.Page(SEARCH_PAGE, title="Search & Insights", icon=":material/manage_search:")
     my_plan = st.Page(MY_PLAN_PAGE, title="My Plan", icon=":material/workspace_premium:")
+    guide = st.Page(GUIDE_PAGE, title="How It Works", icon=":material/help:")
 
     # V4-1-1/V4-2-1: grouped, stepwise navigation — the menu itself teaches the
     # flow. The standalone Horoscope Check page is gone (V4-3) — computing/saving
@@ -246,7 +247,7 @@ else:
         "Step 2 · Candidates": [ingest, profiles],
         "Step 3 · Match": [matching],
         "Step 4 · Follow Up": [tasks],
-        "More": [search, my_plan],
+        "More": [search, my_plan, guide],
     }
     if auth.is_admin(current["role"]):
         sections["Admin"] = [st.Page(USERS_PAGE, title="Customers", icon=":material/group:")]
