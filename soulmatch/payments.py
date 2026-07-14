@@ -235,6 +235,16 @@ def _latest_subscription(session: Session, owner_id: int) -> Subscription | None
     )
 
 
+def current_billing_interval(session: Session, owner_id: int) -> str | None:
+    """"monthly"/"annual" the member's current paid subscription bills on, or
+    None if they have never had one (Free, or no webhook has landed yet).
+    Used by My Plan (pages_/9_My_Plan.py) to tell "same plan, same interval"
+    (nothing to do) apart from "same plan, different interval" (needs a
+    switch-billing button, not just an upgrade-to-a-different-plan one)."""
+    sub = _latest_subscription(session, owner_id)
+    return sub.interval if sub else None
+
+
 def cancel_subscription_at_period_end(session: Session, owner_id: int) -> None:
     """Used by the Pause action on My Plan: tells the gateway to stop
     billing at the end of the current period. The local plan_status flip

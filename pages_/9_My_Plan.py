@@ -28,6 +28,7 @@ theme.help_link("billing", "❓ Billing questions?")
 with get_session() as session:
     status = billing.quota_status(session, current_user)
     profile_usage = billing.profile_usage_status(session, current_user)
+    current_billing_interval = payments.current_billing_interval(session, owner)
 
 c1, c2 = st.columns([1, 2])
 with c1:
@@ -132,8 +133,16 @@ for col, (plan_key, label) in zip(plan_cols, plan_details):
     price = (price_table_annual if interval == "annual" else price_table)[plan_key]
     with col:
         with st.container(border=True):
-            is_current = plan_key == actual_plan
-            st.markdown(f"### {label}" + (" ✅ current" if is_current else ""))
+            # V5-7: "current" must match both plan AND billing interval — a
+            # member on Plus Monthly viewing the Annual toggle is still on
+            # Plus, but not on *this* Plus card's interval, so it must offer
+            # a switch-billing button instead of silently showing no action
+            # (the bug: only Pro showed an "Upgrade" button in that case).
+            is_current_plan = plan_key == actual_plan
+            is_current_exact = is_current_plan and (plan_key == "free" or current_billing_interval == interval)
+            st.markdown(f"### {label}" + (" ✅ current" if is_current_exact else ""))
+            if is_current_plan and not is_current_exact and plan_key != "free":
+                st.caption(f"Your current plan — billed {current_billing_interval or 'monthly'}.")
             st.markdown(f"**{symbol}{price}{period_label}**" if price else "**Free**")
             if interval == "annual" and price:
                 st.caption(f"Approx {billing.annual_discount_pct(plan_key, currency)}% off vs. paying monthly.")
@@ -152,9 +161,9 @@ for col, (plan_key, label) in zip(plan_cols, plan_details):
 
             checkout_key = f"_checkout_url_{plan_key}_{interval}_{currency}"
             if plan_key == "free":
-                if is_current:
+                if is_current_exact:
                     st.caption("You're on Free.")
-            elif is_current and plan_status == "paused":
+            elif is_current_exact and plan_status == "paused":
                 if st.button(f"Resume {label}", key=f"resume_{plan_key}", type="primary"):
                     with get_session() as session:
                         try:
@@ -166,7 +175,25 @@ for col, (plan_key, label) in zip(plan_cols, plan_details):
                             st.error(str(e))
                         else:
                             st.session_state[checkout_key] = url
-            elif not is_current:
+            elif is_current_plan and not is_current_exact:
+                # Same plan, different billing interval — e.g. Plus Monthly
+                # viewing the Annual toggle. Starts a fresh checkout for the
+                # new interval exactly like an upgrade; the gateway webhook
+                # updates plan/interval on the resulting subscription.charged
+                # the same way a plan change does.
+                switch_label = "Switch to annual billing" if interval == "annual" else "Switch to monthly billing"
+                if st.button(switch_label, key=f"switch_interval_{plan_key}"):
+                    with get_session() as session:
+                        try:
+                            if currency == "INR":
+                                url = payments.create_razorpay_subscription_checkout(owner, plan_key, interval)
+                            else:
+                                url = payments.create_stripe_checkout_session(owner, plan_key, interval)
+                        except (billing.PaymentConfigError, requests.RequestException) as e:
+                            st.error(str(e))
+                        else:
+                            st.session_state[checkout_key] = url
+            elif not is_current_plan:
                 if st.button(f"Upgrade to {label}" if price else f"Switch to {label}", key=f"upgrade_{plan_key}"):
                     with get_session() as session:
                         try:

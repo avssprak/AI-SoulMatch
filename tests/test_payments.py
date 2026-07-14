@@ -120,6 +120,21 @@ def test_is_new_event_only_true_once():
     assert session.scalar(select(WebhookEvent)) is not None
 
 
+# --- current_billing_interval (V5-7: same-plan interval switch on My Plan) ---
+
+def test_current_billing_interval_none_for_free_user():
+    session = _memory_session()
+    _seed_owner(session)
+    assert payments.current_billing_interval(session, OWNER) is None
+
+
+def test_current_billing_interval_reflects_latest_subscription():
+    session = _memory_session()
+    _seed_owner(session)
+    payments.apply_razorpay_event(session, _load("razorpay_subscription_activated.json"))
+    assert payments.current_billing_interval(session, OWNER) == "monthly"
+
+
 # --- Razorpay event application ----------------------------------------------
 
 def test_razorpay_activated_creates_subscription_and_activates_user():
