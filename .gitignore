@@ -9,4 +9,6 @@ uploads/
 .streamlit/secrets.toml
 run_stdout.log
 run_stderr.log
+streamlit.log
+webhook.log
 streamlit.pid
