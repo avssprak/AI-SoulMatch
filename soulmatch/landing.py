@@ -50,8 +50,14 @@ _CSS = "<style>" + FONT_FACE_CSS + """
 }
 
 [data-testid="stSidebar"] { display: none; }
-[data-testid="stHeader"] { background: transparent; }
-img[data-testid="stLogo"] { display: none; }
+/* The fixed Streamlit header only carries the app logo pre-login; left
+   transparent it floats the logo over scrolled content (seen on mobile).
+   Hide it — and the logo under every testid Streamlit has used for it. */
+[data-testid="stHeader"] { display: none; }
+img[data-testid="stLogo"],
+[data-testid="stLogo"],
+[data-testid="stLogoSpacer"],
+[data-testid="stHeader"] img { display: none; }
 
 .stApp { background: var(--sm-ivory); }
 
@@ -77,7 +83,7 @@ img[data-testid="stLogo"] { display: none; }
 .block-container > div { position: relative; z-index: 1; }
 
 /* ---------- hero ---------- */
-.sm-brand { display: flex; align-items: baseline; gap: 12px; margin: 0 0 40px -6px; }
+.sm-brand { display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px; margin: 0 0 40px -6px; }
 .sm-brand img.sm-mark { height: 62px; }
 .sm-by { font: 500 0.82rem/1 'Inter', sans-serif; }
 .sm-by b { color: var(--sm-gold-soft); font-weight: 700; }
@@ -355,15 +361,38 @@ div[class*="st-key-login_card"] h3 { font-family: 'Playfair Display', Georgia, s
 @media (max-width: 1000px) {
     .sm-h1 { font-size: 2.2rem; }
     .sm-stats, .sm-grid, .sm-quotes { grid-template-columns: 1fr 1fr; }
-    .sm-steps { grid-template-columns: 1fr 1fr; }
+    .sm-steps, .sm-pricing-grid { grid-template-columns: 1fr 1fr; }
     .sm-split { grid-template-columns: 1fr; }
     div[class*="st-key-login_card"] { margin: 20px auto; }
 }
 @media (max-width: 640px) {
+    .block-container { padding-top: 1.5rem; }
     .sm-h1 { font-size: 1.8rem; }
-    .sm-stats, .sm-grid, .sm-quotes, .sm-steps, .sm-kpis { grid-template-columns: 1fr; }
+    .sm-h2 { font-size: 1.5rem; }
+    .sm-stats, .sm-grid, .sm-quotes, .sm-steps, .sm-kpis,
+    .sm-pricing-grid { grid-template-columns: 1fr; }
+    .sm-price-card { padding: 24px 20px; }
+    .sm-section { padding: 48px 0 12px 0; }
+    .sm-brand { margin: 0 0 28px 0; }
+    .sm-brand img.sm-mark { height: 44px; }
+    .sm-mock .body { padding: 18px; }
+    .sm-bars { height: 90px; }
     .sm-cta { padding: 44px 24px; }
-    .block-container::before { height: 1150px; }
+    /* Taller band: single-column content stacks much deeper on phones. */
+    .block-container::before { height: 1280px; }
+
+    /* Feature cards and step cards: icon-above-heading (centered, from the
+       desktop 3/4-column grid) leaves a tall empty band above the heading
+       once cards go full-width. Put icon and heading on one row instead. */
+    .sm-card, .sm-step { padding: 20px 22px; text-align: left; }
+    .sm-card .sm-ico, .sm-step .num {
+        display: inline-flex; align-items: center; justify-content: center;
+        float: left; margin: 0 14px 0 0;
+    }
+    .sm-card h4, .sm-step h4 {
+        display: flex; align-items: center; min-height: 46px; margin: 0 0 4px 0;
+    }
+    .sm-card p, .sm-step p { clear: both; margin-top: 10px; }
 }
 </style>
 """
