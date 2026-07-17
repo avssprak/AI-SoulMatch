@@ -13,9 +13,17 @@ user = auth.require_login()
 owner = owner_id_of(user)
 theme.page_header("Search & Insights", "Ask questions in plain language and get instant answers across your whole database.")
 
-tab_search, tab_insights = st.tabs(["Natural Language Search", "Quick Insights"])
+# Plain st.tabs() has no way to pin the active tab — a widget change (e.g.
+# picking a row) anywhere on the page snaps the view back to the first tab
+# on rerun. A segmented_control is a normal keyed widget instead, so
+# Streamlit persists its value across reruns on its own.
+_SECTIONS = ["Natural Language Search", "Quick Insights"]
+active_section = st.segmented_control(
+    "Section", _SECTIONS, default=_SECTIONS[0], required=True,
+    key="search_active_section", label_visibility="collapsed",
+)
 
-with tab_search:
+if active_section == _SECTIONS[0]:
     if not billing.can_use_nl_search(user):
         st.info(billing.NL_SEARCH_TEASE)
         query_text = ""
@@ -95,7 +103,7 @@ with tab_search:
                         c3.markdown(f"**Horoscope:** {picked['Horoscope']}")
                         open_profile_button(int(picked["ID"]), label="Open profile to edit, view documents, or manage tasks")
 
-with tab_insights:
+if active_section == _SECTIONS[1]:
     with get_session() as session:
         col1, col2 = st.columns(2)
 

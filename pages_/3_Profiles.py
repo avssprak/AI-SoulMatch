@@ -105,9 +105,17 @@ if st.session_state.pop("_clear_profiles_selection", False):
 # before the table widget below is instantiated for this run.
 deep_link_profile_id = consume_open_profile_request()
 
-tab_search, tab_manual, tab_duplicates = st.tabs(["Search & Manage", "Add Manually", "🔍 Find Duplicate Profiles"])
+# Plain st.tabs() has no way to pin the active tab — any widget change
+# anywhere on the page snaps the view back to the first tab on rerun. A
+# segmented_control is a normal keyed widget instead, so Streamlit persists
+# its value across reruns on its own.
+_SECTIONS = ["Search & Manage", "Add Manually", "🔍 Find Duplicate Profiles"]
+active_section = st.segmented_control(
+    "Section", _SECTIONS, default=_SECTIONS[0], required=True,
+    key="profiles_active_section", label_visibility="collapsed",
+)
 
-with tab_search:
+if active_section == _SECTIONS[0]:
     # A natural-language query prefills the structured filter widgets below
     # (still visible + editable) rather than replacing them — the filters
     # stay the single source of truth. Widget session_state can only be
@@ -377,11 +385,13 @@ with tab_search:
                         flash(f"Moved to {quick_stage}.")
                         st.rerun()
 
-            tab_overview, tab_docs, tab_followup, tab_matches = st.tabs(
-                ["Overview", "Documents", "Follow-up", "Matches"]
+            _DETAIL_SECTIONS = ["Overview", "Documents", "Follow-up", "Matches"]
+            active_detail_section = st.segmented_control(
+                "Detail section", _DETAIL_SECTIONS, default=_DETAIL_SECTIONS[0], required=True,
+                key=f"profile_detail_section_{profile.id}", label_visibility="collapsed",
             )
 
-            with tab_overview:
+            if active_detail_section == _DETAIL_SECTIONS[0]:
                 c1, c2, c3 = st.columns(3)
                 c1.markdown(f"**Name:** {profile.full_name or '—'}")
                 c2.markdown(f"**Gender:** {profile.gender or '—'}")
@@ -607,7 +617,7 @@ with tab_search:
                                 st.session_state[confirm_key] = True
                                 st.rerun()
 
-            with tab_docs:
+            if active_detail_section == _DETAIL_SECTIONS[1]:
                 existing_docs = session.scalars(
                     select(Document).where(Document.profile_id == profile.id).order_by(Document.created_at.desc())
                 ).all()
@@ -654,7 +664,7 @@ with tab_search:
                                 session.commit()
                                 st.rerun()
 
-            with tab_followup:
+            if active_detail_section == _DETAIL_SECTIONS[2]:
                 # V4-5-2: tasks, activities, and stage changes interleaved into
                 # one timeline (newest first) — a member shouldn't have to
                 # check two tabs to see "what's happened / what's next" for a
@@ -729,7 +739,7 @@ with tab_search:
                 else:
                     st.caption("Nothing logged yet — tasks, notes, and stage changes will appear here.")
 
-            with tab_matches:
+            if active_detail_section == _DETAIL_SECTIONS[3]:
                 profile_matches = session.scalars(
                     select(MatchResult)
                     .where(or_(MatchResult.bride_id == profile.id, MatchResult.groom_id == profile.id))
@@ -782,7 +792,7 @@ with tab_search:
                 "biodata, or use the **Add Manually** tab below."
             )
 
-with tab_manual:
+if active_section == _SECTIONS[1]:
     if not can_write:
         st.info("Your account has read-only (Viewer) access.")
     else:
@@ -880,7 +890,7 @@ with tab_manual:
                     del st.session_state["pending_manual_profile"]
                     st.rerun()
 
-with tab_duplicates:
+if active_section == _SECTIONS[2]:
     st.caption(
         "Pairwise scan of every profile for likely duplicates (same gender, "
         "matching phone/DOB/similar name) — for profiles that already exist, "

@@ -184,11 +184,22 @@ if not brides or not grooms:
     st.info("Need at least one Bride and one Groom profile. Add some via **Add Candidates** or **Candidates**.")
     st.stop()
 
-tab_scoreboard, tab_single, tab_all, tab_saved = st.tabs(
-    ["Scoreboard", "Check a Specific Pair", "Screen All Pairs", f"Saved Matches ({_saved_match_count})"]
+# Plain st.tabs() has no way to pin the active tab — any widget change
+# anywhere on the page (a selectbox pick, a slider drag, a button that
+# reruns) snaps the view back to the first tab. A segmented_control is a
+# normal keyed widget instead, so Streamlit persists its value across
+# reruns on its own — picking a Groom below no longer bounces you to
+# Scoreboard. Labels are kept stable (no embedded counts) so the selected
+# value still matches after a rerun changes _saved_match_count.
+_SECTIONS = ["Scoreboard", "Check a Specific Pair", "Screen All Pairs", "Saved Matches"]
+active_section = st.segmented_control(
+    "Section", _SECTIONS, default=_SECTIONS[0], required=True,
+    key="matching_active_section", label_visibility="collapsed",
 )
+if _saved_match_count:
+    st.caption(f"Saved Matches: {_saved_match_count}")
 
-with tab_single:
+if active_section == _SECTIONS[1]:
     col1, col2 = st.columns(2)
     bride_id = col1.selectbox(
         "Bride", [p.id for p in brides],
@@ -216,7 +227,7 @@ with tab_single:
 
     render_match_detail(bride_id, groom_id, can_write, "single")
 
-with tab_scoreboard:
+if active_section == _SECTIONS[0]:
     st.caption(
         "Rank every candidate against one 'main' profile — e.g. your child's horoscope stays "
         "fixed while you browse everyone on the other side, ranked by a blended score."
@@ -454,7 +465,7 @@ with tab_scoreboard:
         elif len(selected_rows) > 3:
             st.info("Select up to 3 candidates to compare side by side (currently more than 3 selected).")
 
-with tab_all:
+if active_section == _SECTIONS[2]:
     combo_count = len(brides) * len(grooms)
     st.caption(f"{len(brides)} bride(s) × {len(grooms)} groom(s) = {combo_count} combinations")
     ALL_PAIRS_WARN_THRESHOLD = 500
@@ -488,7 +499,7 @@ with tab_all:
         df = pd.DataFrame(rows).sort_values("Score", ascending=False)
         st.dataframe(df, width='stretch', hide_index=True)
 
-with tab_saved:
+if active_section == _SECTIONS[3]:
     with get_session() as session:
         saved_matches = session.scalars(
             owned(select(MatchResult), MatchResult, owner).order_by(MatchResult.created_at.desc())
