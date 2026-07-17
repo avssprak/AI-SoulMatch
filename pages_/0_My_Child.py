@@ -19,7 +19,7 @@ from soulmatch.db import get_session
 from soulmatch.horoscope_ui import compute_and_save_chart
 from soulmatch.models import Profile
 from soulmatch.nav import MATCHING_PAGE, next_step_button
-from soulmatch.profiles import age_from_dob, is_match_ready, profile_completeness
+from soulmatch.profiles import age_display, age_from_dob, is_match_ready, profile_completeness
 from soulmatch.tenancy import get_owned, owned, owner_id_of
 from soulmatch.ui import flash, show_flash
 
@@ -61,7 +61,7 @@ else:
         with st.container(border=True):
             st.markdown(f"### 👑 {child.full_name or 'Unnamed'} — your prime profile")
             st.caption(
-                f"{'Daughter' if child.gender == 'Bride' else 'Son'} · Age {child.age or '—'} · "
+                f"{'Daughter' if child.gender == 'Bride' else 'Son'} · Age {age_display(child.dob, child.age)} · "
                 f"{child.current_location or 'Location not set'} · {child.phone or 'No phone on file'}"
             )
             st.progress(

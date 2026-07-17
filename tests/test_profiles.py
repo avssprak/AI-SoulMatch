@@ -6,7 +6,9 @@ from sqlalchemy.orm import Session
 
 from soulmatch import config, documents
 from soulmatch.models import Activity, Base, MatchResult, Profile, Task
-from soulmatch.profiles import delete_profile, is_match_ready, profile_completeness
+from soulmatch.profiles import (
+    age_display, delete_profile, find_contacts_in_text, is_match_ready, profile_completeness,
+)
 
 
 @pytest.fixture()
@@ -98,3 +100,46 @@ def test_is_match_ready_requires_all_three_birth_fields():
     assert is_match_ready(profile) is False
 
     assert is_match_ready(Profile()) is False
+
+
+# --- find_contacts_in_text (contact recovery from raw WhatsApp text) ---------
+
+def test_find_contacts_basic_and_multiple_phones():
+    text = (
+        "Contact Phone No : 9867743050 / 9223179277,\n"
+        "Email: pochinapeddi@gmail.com,"
+    )
+    found = find_contacts_in_text(text)
+    assert found["phones"] == ["9867743050", "9223179277"]
+    assert found["emails"] == ["pochinapeddi@gmail.com"]
+
+
+def test_find_contacts_parent_label_and_country_code():
+    text = "17. Parents Location and Contact No. : Vijayawada, Mother contact number: +91 98489 02468"
+    found = find_contacts_in_text(text)
+    assert len(found["phones"]) == 1
+    assert "98489" in found["phones"][0]
+
+
+def test_find_contacts_ignores_dates_and_dedupes():
+    text = "Dob:23-Sep-1995, DOB: 22.04.1994, Tob: 15:13 PM, call 9848902468 or 9848902468"
+    found = find_contacts_in_text(text)
+    assert found["phones"] == ["9848902468"]
+    assert found["emails"] == []
+
+
+# --- age_display (years + months computed live from DOB) --------------------
+
+def test_age_display_years_and_months():
+    from datetime import date
+    assert age_display(date(1995, 10, 16), today=date(2026, 2, 20)) == "30y 4m"
+
+
+def test_age_display_exact_birthday():
+    from datetime import date
+    assert age_display(date(1995, 10, 16), today=date(2026, 10, 16)) == "31y 0m"
+
+
+def test_age_display_falls_back_without_dob():
+    assert age_display(None, fallback_age=29) == "29"
+    assert age_display(None, fallback_age=None) == "—"

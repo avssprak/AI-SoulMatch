@@ -170,11 +170,19 @@ with get_session() as _session:
         owned(select(RawMessage).where(RawMessage.processed.is_(True)), RawMessage, owner)
     ).all())
 
-tab_import, tab_review, tab_history = st.tabs(
-    ["📥 Import", f"📋 Review queue ({_review_count})", f"🗂️ History ({_history_count})"]
+# Plain st.tabs() has no way to pin the active tab, so any button on this
+# page that calls st.rerun() (delete, archive, extract, ...) silently snaps
+# the view back to the first tab. A segmented_control is a normal keyed
+# widget instead — Streamlit persists its value across reruns on its own —
+# so the section the user was working in stays selected.
+_SECTIONS = ["📥 Import", "📋 Review queue", "🗂️ History"]
+active_section = st.segmented_control(
+    "Section", _SECTIONS, default=_SECTIONS[0], required=True,
+    key="ingest_active_section", label_visibility="collapsed",
 )
+st.caption(f"Review queue: {_review_count} pending · History: {_history_count} processed")
 
-with tab_import:
+if active_section == _SECTIONS[0]:
     st.markdown(
         """
 1. In WhatsApp, open the group/chat → ⋮ menu → **More** → **Export chat** → **Without Media** (or with media if you want photos too).
@@ -336,7 +344,7 @@ with tab_import:
                     _auto_process_raw_messages(likely_ids, current_user)
                 st.rerun()
 
-with tab_review:
+if active_section == _SECTIONS[1]:
     theme.section("Unprocessed Messages")
 
     with get_session() as session:
@@ -547,7 +555,7 @@ with tab_review:
                             del st.session_state[pending_key]
                             st.rerun()
 
-with tab_history:
+if active_section == _SECTIONS[2]:
     with get_session() as session:
         processed_msgs = session.scalars(
             owned(select(RawMessage).where(RawMessage.processed.is_(True)), RawMessage, owner)
@@ -568,7 +576,8 @@ with tab_history:
             "Reload one — e.g. it was extracted offline before a real AI service was set up — "
             "to send it back to the Review queue for re-extraction."
         )
-        if st.button(f"Reload all {len(processed_msgs)} shown message(s) for reprocessing", key="bulk_reload"):
+        hcol1, hcol2 = st.columns(2)
+        if hcol1.button(f"Reload all {len(processed_msgs)} shown message(s) for reprocessing", key="bulk_reload"):
             with get_session() as session:
                 for m in processed_msgs:
                     raw = get_owned(session, RawMessage, m.id, owner)
@@ -577,10 +586,32 @@ with tab_history:
             flash("Reloaded — check the Review queue tab.")
             st.rerun()
 
+        checked_ids = [
+            msg.id for msg in processed_msgs
+            if st.session_state.get(f"history_check_{msg.id}")
+        ]
+        if hcol2.button(
+            f"🔁 Send {len(checked_ids)} selected to review queue" if checked_ids
+            else "🔁 Send selected to review queue",
+            key="bulk_reload_selected", disabled=not checked_ids,
+        ):
+            with get_session() as session:
+                for mid in checked_ids:
+                    raw = get_owned(session, RawMessage, mid, owner)
+                    if raw:
+                        raw.processed = False
+                session.commit()
+            for mid in checked_ids:
+                st.session_state.pop(f"history_check_{mid}", None)
+            flash(f"Sent {len(checked_ids)} message(s) back to the Review queue.")
+            st.rerun()
+
         for msg in processed_msgs:
             profile = profiles_by_msg.get(msg.id)
             confirm_delete_key = f"confirm_delete_proc_{msg.id}"
-            with st.expander(f"{msg.sender or 'Unknown'} — {msg.content[:80]}"):
+            xcol1, xcol2 = st.columns([1, 30])
+            xcol1.checkbox("select", key=f"history_check_{msg.id}", label_visibility="collapsed")
+            with xcol2.expander(f"{msg.sender or 'Unknown'} — {msg.content[:80]}"):
                 st.text(msg.content)
                 if profile:
                     st.caption(f"Linked to profile #{profile.id} — {profile.full_name or 'Unnamed'}")

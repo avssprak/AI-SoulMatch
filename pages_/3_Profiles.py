@@ -1,3 +1,4 @@
+import re
 from datetime import date, time as dt_time
 
 import pandas as pd
@@ -13,11 +14,14 @@ from soulmatch.extraction.llm import LLMError
 from soulmatch.horoscope_ui import compute_and_save_chart
 from soulmatch.matchview import render_saved_match_result
 from soulmatch.models import (
-    PIPELINE_STAGES, Activity, Document, MatchResult, Profile, Task, User,
+    PIPELINE_STAGES, Activity, Document, MatchResult, Profile, RawMessage, Task, User,
     stage_group_label, utcnow,
 )
 from soulmatch.nav import MATCHING_PAGE, consume_open_profile_request, next_step_button, show_next_step
-from soulmatch.profiles import age_from_dob, delete_profile, is_match_ready, profile_completeness
+from soulmatch.profiles import (
+    age_display, age_from_dob, delete_profile, find_contacts_in_text, is_match_ready,
+    profile_completeness,
+)
 from soulmatch.search import describe_filters, parse_query
 from soulmatch.summary import profile_summary_html
 from soulmatch.task_ui import render_task_quick_add
@@ -46,6 +50,19 @@ def _parse_birth_time(value: str | None) -> dt_time | None:
         return dt_time(int(hour), int(minute))
     except (ValueError, TypeError):
         return None
+
+
+def _phone_links(raw: str | None) -> str:
+    """'+91 93910 07438, 9985557438' -> clickable tel: markdown links, so a
+    parent can tap-to-call from the profile once they like a candidate."""
+    if not raw:
+        return "—"
+    parts = [p.strip() for p in re.split(r"[,/;]", raw) if p.strip()]
+    links = []
+    for part in parts:
+        digits = re.sub(r"[^\d+]", "", part)
+        links.append(f"[📞 {part}](tel:{digits})" if len(digits.lstrip('+')) >= 10 else part)
+    return " · ".join(links)
 
 
 @st.dialog("Profile Summary", width="large")
@@ -218,6 +235,7 @@ with tab_search:
     if profiles:
         rows = [{
             "ID": p.id, "Name": p.full_name, "Gender": p.gender, "Age": p.age,
+            "Phone": p.phone,
             "Religion": p.religion, "Caste": p.caste, "Location": p.current_location,
             "Qualification": p.qualification, "Occupation": p.occupation,
             "Stage": p.stage, "Horoscope": "Yes" if p.horoscope_available else "No",
@@ -298,7 +316,7 @@ with tab_search:
                     child_badge = "  👶 :violet-badge[My Child]" if profile.is_own_child else ""
                     st.markdown(f"### #{profile.id} — {profile.full_name or 'Unnamed'}  {stage_badge(profile.stage)}{child_badge}")
                     st.caption(
-                        f"{profile.gender or '—'} · Age {profile.age or '—'} · "
+                        f"{profile.gender or '—'} · Age {age_display(profile.dob, profile.age)} · "
                         f"{profile.current_location or 'Location not set'} · {profile.phone or 'No phone on file'}"
                     )
                     st.progress(
@@ -367,7 +385,7 @@ with tab_search:
                 c1, c2, c3 = st.columns(3)
                 c1.markdown(f"**Name:** {profile.full_name or '—'}")
                 c2.markdown(f"**Gender:** {profile.gender or '—'}")
-                c3.markdown(f"**Age:** {profile.age or '—'}")
+                c3.markdown(f"**Age:** {age_display(profile.dob, profile.age)}")
                 c1, c2, c3 = st.columns(3)
                 c1.markdown(f"**Religion:** {profile.religion or '—'}")
                 c2.markdown(f"**Caste:** {profile.caste or '—'}")
@@ -380,8 +398,84 @@ with tab_search:
                 c1.markdown(f"**DOB:** {profile.dob or '—'}")
                 c2.markdown(f"**Birth Time:** {profile.birth_time or '—'}")
                 c3.markdown(f"**Birth Place:** {profile.birth_place or '—'}")
+                c1, c2, c3 = st.columns(3)
+                c1.markdown(f"**Phone:** {_phone_links(profile.phone)}")
+                c2.markdown(f"**WhatsApp:** {_phone_links(profile.whatsapp) if profile.whatsapp else '—'}")
+                c3.markdown(f"**Email:** {profile.email or '—'}")
+                c1, c2, c3 = st.columns(3)
+                c1.markdown(f"**Father:** {profile.father_name or '—'}")
+                c2.markdown(f"**Mother:** {profile.mother_name or '—'}")
+                c3.markdown(f"**Siblings:** {profile.siblings or '—'}")
+                if profile.family_details:
+                    st.markdown(f"**Family:** {profile.family_details}")
+                extra_bits = [
+                    f"**Salary:** {profile.salary}" if profile.salary else None,
+                    f"**Native Place:** {profile.native_place}" if profile.native_place else None,
+                    f"**Marital Status:** {profile.marital_status}" if profile.marital_status else None,
+                ]
+                if any(extra_bits):
+                    st.markdown(" · ".join(b for b in extra_bits if b))
+                if profile.expectations:
+                    # JSON column: usually a dict, but LLMs occasionally return a plain string
+                    expect_text = (
+                        "; ".join(f"{k.replace('_', ' ')}: {v}" for k, v in profile.expectations.items())
+                        if isinstance(profile.expectations, dict) else str(profile.expectations)
+                    )
+                    st.markdown(f"**Partner expectations:** {expect_text}")
                 if profile.notes:
                     st.markdown(f"**Notes:** {profile.notes}")
+
+                # Safety net for profiles extracted before contact capture was
+                # hardened: re-scan the original WhatsApp message for phone
+                # numbers / emails the AI missed, and let the member pull the
+                # full raw text into Notes so nothing stays lost.
+                if can_write and profile.source_message_id:
+                    source_msg = session.get(RawMessage, profile.source_message_id)
+                    if source_msg and (not profile.phone or not profile.email):
+                        found = find_contacts_in_text(source_msg.content)
+                        missing_phone = not profile.phone and found["phones"]
+                        missing_email = not profile.email and found["emails"]
+                        if missing_phone or missing_email:
+                            with st.expander("📞 Contact details found in the original message", expanded=True):
+                                if missing_phone:
+                                    st.markdown("Phone number(s): " + " · ".join(found["phones"]))
+                                if missing_email:
+                                    st.markdown("Email: " + ", ".join(found["emails"]))
+                                rc1, rc2 = st.columns(2)
+                                if rc1.button("Save to this profile", key=f"recover_contacts_{profile.id}", type="primary"):
+                                    recovered = []
+                                    if missing_phone:
+                                        profile.phone = ", ".join(found["phones"])[:50]
+                                        recovered.append(f"phone {profile.phone}")
+                                    if missing_email:
+                                        profile.email = found["emails"][0]
+                                        recovered.append(f"email {profile.email}")
+                                    session.add(Activity(
+                                        profile_id=profile.id, owner_user_id=owner,
+                                        event="Contact details recovered",
+                                        detail="From original message: " + "; ".join(recovered),
+                                        created_by_user_id=current_user["id"],
+                                    ))
+                                    session.commit()
+                                    flash("Contact details saved from the original message.")
+                                    st.rerun()
+                                if rc2.button("Also copy full message into Notes", key=f"dump_raw_{profile.id}"):
+                                    if missing_phone:
+                                        profile.phone = ", ".join(found["phones"])[:50]
+                                    if missing_email:
+                                        profile.email = found["emails"][0]
+                                    marker = "--- Original WhatsApp message ---"
+                                    if marker not in (profile.notes or ""):
+                                        profile.notes = ((profile.notes or "").rstrip() + f"\n\n{marker}\n{source_msg.content.strip()}").strip()
+                                    session.add(Activity(
+                                        profile_id=profile.id, owner_user_id=owner,
+                                        event="Contact details recovered",
+                                        detail="Original message copied into Notes",
+                                        created_by_user_id=current_user["id"],
+                                    ))
+                                    session.commit()
+                                    flash("Contacts saved and original message copied into Notes.")
+                                    st.rerun()
 
                 if can_write:
                     with st.expander("✏️ Edit profile"):
@@ -415,6 +509,21 @@ with tab_search:
                             )
                             birth_place = c3.text_input("Birth Place", profile.birth_place or "")
 
+                            c1, c2, c3 = st.columns(3)
+                            phone = c1.text_input(
+                                "Phone", profile.phone or "",
+                                help="Comma-separate several numbers; include country code for NRI numbers.",
+                            )
+                            whatsapp = c2.text_input("WhatsApp", profile.whatsapp or "")
+                            email = c3.text_input("Email", profile.email or "")
+
+                            c1, c2, c3 = st.columns(3)
+                            father_name = c1.text_input("Father's Name", profile.father_name or "")
+                            mother_name = c2.text_input("Mother's Name", profile.mother_name or "")
+                            siblings = c3.text_input("Siblings", profile.siblings or "")
+
+                            family_details = st.text_input("Family Details", profile.family_details or "")
+
                             c1, c2 = st.columns(2)
                             height_cm = c1.number_input(
                                 "Height (cm)", 100.0, 250.0, min(max(profile.height_cm or 165.0, 100.0), 250.0)
@@ -446,6 +555,13 @@ with tab_search:
                                 profile.dob = dob
                                 profile.birth_time = birth_time_val.strftime("%H:%M") if birth_time_val else None
                                 profile.birth_place = birth_place or None
+                                profile.phone = phone.strip() or None
+                                profile.whatsapp = whatsapp.strip() or None
+                                profile.email = email.strip() or None
+                                profile.father_name = father_name.strip() or None
+                                profile.mother_name = mother_name.strip() or None
+                                profile.siblings = siblings.strip() or None
+                                profile.family_details = family_details.strip() or None
                                 profile.height_cm = height_cm
                                 profile.food_preference = food_preference or None
                                 profile.stage = stage

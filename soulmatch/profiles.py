@@ -6,6 +6,7 @@ into one) — this module is about removing a profile entirely.
 
 from __future__ import annotations
 
+import re
 from datetime import date
 
 from sqlalchemy import or_, select
@@ -26,6 +27,21 @@ def age_from_dob(dob: date, today: date | None = None) -> int:
     return today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
 
 
+def age_display(dob: date | None, fallback_age: int | None = None, today: date | None = None) -> str:
+    """'30y 4m' computed live from DOB — the display form of age_from_dob(),
+    precise enough to be useful without a stated age going stale between
+    when a biodata was written and when it's viewed. Falls back to the
+    stored whole-years value for older profiles that only have that."""
+    if not dob:
+        return f"{fallback_age}" if fallback_age is not None else "—"
+    today = today or date.today()
+    years = age_from_dob(dob, today)
+    months = today.month - dob.month - (today.day < dob.day)
+    if months < 0:
+        months += 12
+    return f"{years}y {months}m"
+
+
 # The fields a coordinator actually needs filled in to work a profile day to
 # day — not every column on the model (e.g. university/company/salary are
 # nice-to-have, not blocking).
@@ -44,6 +60,30 @@ def profile_completeness(profile: Profile) -> tuple[int, list[str]]:
     filled = len(_COMPLETENESS_FIELDS) - len(missing)
     percent = round(100 * filled / len(_COMPLETENESS_FIELDS))
     return percent, missing
+
+
+# Digits chained by optional space/dash, 10-14 digits total, optional +country
+# code — deliberately loose (WhatsApp forwards write numbers every which way)
+# but the separators exclude dotted dates like 22.04.1994.
+_PHONE_RE = re.compile(r"(?:\+\d{1,3}[-\s]?)?\d(?:[-\s]?\d){9,13}")
+_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]*\w")
+
+
+def find_contacts_in_text(text: str) -> dict:
+    """Regex sweep of a raw message for contact details — the safety net for
+    when AI extraction missed a phone/email (e.g. buried in an emoji line or
+    labelled 'Mother contact number'). Returns {"phones": [...], "emails": [...]}
+    deduped, in order of appearance."""
+    phones: list[str] = []
+    seen_digits: set[str] = set()
+    for m in _PHONE_RE.finditer(text or ""):
+        digits = re.sub(r"\D", "", m.group(0))
+        if len(digits) < 10 or digits in seen_digits:
+            continue
+        seen_digits.add(digits)
+        phones.append(m.group(0).strip())
+    emails = list(dict.fromkeys(m.group(0) for m in _EMAIL_RE.finditer(text or "")))
+    return {"phones": phones, "emails": emails}
 
 
 def is_match_ready(profile: Profile) -> bool:

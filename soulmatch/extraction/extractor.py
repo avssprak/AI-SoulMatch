@@ -17,7 +17,12 @@ from . import llm
 PROFILE_FIELDS = {
     "full_name": "string",
     "gender": '"Bride" or "Groom" (bride = female seeking groom, groom = male)',
-    "age": "integer years",
+    "age": (
+        "integer years, ONLY if a specific age is literally written in the message "
+        "(e.g. 'Age: 29', '29 yrs'); the app always computes the real age from DOB itself, "
+        "so if no age is written verbatim, this MUST be null — never estimate or back-compute "
+        "it from the DOB yourself"
+    ),
     "dob": "date of birth, ISO format YYYY-MM-DD",
     "birth_time": 'time of birth, 24h "HH:MM"',
     "birth_place": "city/town of birth",
@@ -25,7 +30,10 @@ PROFILE_FIELDS = {
     "mother_name": "string",
     "siblings": "string description",
     "family_details": "string",
-    "phone": "string, digits with country code if present",
+    "phone": (
+        "string; EVERY contact number found anywhere in the message — including a "
+        "parent's/mother's/father's number — comma-separated if several, keep country code"
+    ),
     "whatsapp": "string",
     "email": "string",
     "religion": "string",
@@ -52,7 +60,12 @@ PROFILE_FIELDS = {
     "food_preference": '"Vegetarian", "Non-Vegetarian", "Eggetarian" or null',
     "marital_status": '"Never Married", "Divorced", "Widowed" or null',
     "expectations": "object with any partner preferences (age, height, location, qualification, profession, caste...)",
-    "notes": "anything important that does not fit above",
+    "notes": (
+        "catch-all, REQUIRED whenever any detail is left over: every fact in the message "
+        "that did not fit the keys above (visa status, complexion, parents' professions, "
+        "requirements wording, who provided the details, native/settled history...) so "
+        "no information is lost"
+    ),
 }
 
 _PROMPT_TEMPLATE = """You are a matrimonial profile extraction agent for an Indian community \
@@ -68,6 +81,14 @@ Rules:
 - Heights like 5'6", 5.6 ft, 168 cms must be converted to centimeters (number).
 - If the message describes someone seeking a match FOR their son -> gender "Groom"; \
 for their daughter -> gender "Bride".
+- "age" must come from a number literally written in the message. Never calculate it from \
+the DOB, and never guess a plausible age when none is written — leave it null in that case.
+- Contact numbers are critical and must NEVER be dropped: any phone number anywhere in the \
+message (even labelled as the mother's/father's/parents' contact) goes into "phone", \
+comma-separated if there are several. If a number belongs to a parent, say whose it is in \
+"notes" (e.g. "Phone is mother's contact.").
+- After filling the structured keys, sweep the message once more and put EVERY remaining \
+detail into "notes" — unmapped information must end up there rather than being discarded.
 - "confidence": add this extra key, 0-1, how confident you are this is a matrimonial profile.
 - If the text is clearly NOT a matrimonial profile (greetings, admin talk), return \
 {{"confidence": 0}}.
